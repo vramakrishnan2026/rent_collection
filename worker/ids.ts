@@ -128,8 +128,10 @@ export async function handleIdUpload(request: Request, env: Env, email: string, 
       .run();
     return { status: 200, body: { success: true, uploadId, names, idType, address: Boolean(address), matched: 1, paired: false, unit: code } };
   }
+  type P = { id: string; name: string; drive_file_id: string | null; back_file_id: string | null };
+  let people: P[] = [];
   if (tenancy && names.length) {
-    const people = (await env.DB.prepare('SELECT id, name FROM people WHERE tenancy_id = ?').bind(tenancy.id).all<{ id: string; name: string }>()).results;
+    people = (await env.DB.prepare('SELECT id, name, drive_file_id, back_file_id FROM people WHERE tenancy_id = ?').bind(tenancy.id).all<P>()).results;
     for (const n of names) {
       const match = bestMatch(n, people.filter((p) => !linked.includes(p.id)));
       if (match) linked.push(match);
@@ -146,21 +148,32 @@ export async function handleIdUpload(request: Request, env: Env, email: string, 
     if (pairedWith) {
       if (pairedWith.address == null) await env.DB.prepare('UPDATE id_uploads SET address = ? WHERE id = ?').bind(address, pairedWith.id).run();
       if (pairedWith.status === 'linked' && pairedWith.person_id) {
-        linked = (await env.DB.prepare('SELECT id FROM people WHERE drive_file_id = ?').bind(pairedWith.drive_file_id).all<{ id: string }>()).results.map((r) => r.id);
+        people = (await env.DB.prepare('SELECT id, name, drive_file_id, back_file_id FROM people WHERE drive_file_id = ?').bind(pairedWith.drive_file_id).all<P>()).results;
+        linked = people.map((r) => r.id);
+      } else if (pairedWith.status === 'new') {
+        // The front is waiting for the owner (e.g. under review): this back waits with it.
+        pairedWith = null;
       }
     }
   }
+  // Someone who already has this side on file keeps it: the new photo is kept too, for the owner to review.
+  const sideField = pairedWith ? 'back_file_id' : 'drive_file_id';
+  const already = linked.filter((id) => people.find((p) => p.id === id)?.[sideField]);
+  linked = linked.filter((id) => !already.includes(id));
   for (const pid of linked) await applyToPerson(env, pid, { fileId: file.id, fileName, idType: idType ?? pairedWith?.id_type ?? null, address, side: pairedWith ? 'back' : 'front' });
   // Paired back photo: its address went to the people (or onto the waiting front photo), so nothing is left to do.
-  const status = pairedWith ? (linked.length ? 'linked' : 'dismissed') : names.length > 0 && linked.length === names.length ? 'linked' : 'new';
+  const status = already.length
+    ? 'new'
+    : pairedWith ? (linked.length ? 'linked' : 'dismissed') : names.length > 0 && linked.length === names.length ? 'linked' : 'new';
+  const review = already[0] ?? null;
   const uploadId = crypto.randomUUID();
   await env.DB
     .prepare(
-      'INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id, id_type, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id, id_type, address, review_person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .bind(uploadId, code, tenancy?.id ?? null, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, status, linked[0] ?? null, idType, address)
+    .bind(uploadId, code, tenancy?.id ?? null, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, status, linked[0] ?? null, idType, address, review)
     .run();
-  return { status: 200, body: { success: true, uploadId, status, names, idType, address: Boolean(address), matched: linked.length, paired: Boolean(pairedWith), unit: code } };
+  return { status: 200, body: { success: true, uploadId, status, names, idType, address: Boolean(address), matched: linked.length, paired: Boolean(pairedWith) && linked.length > 0, review: Boolean(review), unit: code } };
 }
 
 /** Saves an ID's file and details on a person (keeps what's already there if the ID doesn't have it). */
@@ -185,7 +198,14 @@ async function applyToPerson(
 
 export async function waitingIds(env: Env, code: string) {
   const rows = (
-    await env.DB.prepare("SELECT * FROM id_uploads WHERE unit_code = ? AND status = 'new' ORDER BY taken_at DESC").bind(code).all<any>()
+    await env.DB
+      .prepare(
+        `SELECT u.*, p.name AS review_name, p.drive_file_id AS review_front, p.back_file_id AS review_back, p.id_uploaded_at AS review_saved
+         FROM id_uploads u LEFT JOIN people p ON p.id = u.review_person_id
+         WHERE u.unit_code = ? AND u.status = 'new' ORDER BY u.taken_at DESC`
+      )
+      .bind(code)
+      .all<any>()
   ).results;
   return rows.map((r) => ({ ...r, names: safeJson(r.names) }));
 }

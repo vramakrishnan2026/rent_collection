@@ -28,6 +28,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 - **Adding IDs (Anita):** Anita picks the unit, takes a photo of the ID (or chooses a photo or PDF), checks it, then taps **Submit**. Submitting is one-way: she can't delete, replace or view IDs afterwards.
   - The photo goes to Drive under the unit. Cloudflare Workers AI reads the **ID type, the holder's name and the address**. It knows the Aadhaar, PAN, driving licence, Voter ID and passport layouts: for example the English name above "DOB" on Aadhaar, and "Name" rather than "Father's Name" or "S/D/W of".
   - **ID numbers and dates of birth are never stored**: anything that looks like one is removed before saving.
+  - **Someone who already has an ID on file:** a new photo of them doesn't replace it. Both are kept, and the new one waits under **New IDs to attach**, marked for review, with **Use this one** and **Keep current**. Anita sees "Saved. The owner will review it." Replacing a photo yourself with **Front ↻** or **Back ↻** still happens straight away.
   - Each person can have **two photos: front and back**. On the unit page, use **＋ Add back** once the front is saved.
   - A back-of-Aadhaar photo (address, no name) that Anita sends within 15 minutes of the front is saved as that person's back, and its address is added.
   - **Settings › Reading IDs** shows what the reader saw last time, to help when a card isn't read.

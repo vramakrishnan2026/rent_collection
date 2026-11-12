@@ -305,3 +305,5 @@ details.guide > a.btn.block { width: calc(100% - 2.2rem); }
 .spinner { width: 2.8rem; height: 2.8rem; margin: 0 auto; border-radius: 50%; border: .3rem solid var(--soft); border-top-color: #16A34A; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+.review-note { margin-top: .4rem; padding: .5rem .7rem; border-radius: .7rem; background: var(--amber-bg); color: var(--amber); font-size: .82rem; }
+.review-note a { color: inherit; }

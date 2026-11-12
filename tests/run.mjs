@@ -431,17 +431,37 @@ await test('owner can photograph an ID first; adding the tenant attaches it', as
   assert.equal(body.waitingIds.length, 0);
 });
 await test('front then back of an Aadhaar: name from the front, address from the back', async () => {
-  aiCards = [{ type: 'Aadhaar', name: 'MOHAN RAO', address: null }];
-  // Mohan already has an ID from earlier; the new front replaces it and the back adds the address
+  await call(`/api/tenancies/${g2}/people`, { method: 'POST', body: { name: 'Ravi Menon' } });
+  aiCards = [{ type: 'Aadhaar', name: 'RAVI MENON', address: null }];
   assert.equal((await upload('G2')).body.matched, 1);
-  aiCards = [{ type: 'Aadhaar', name: null, address: 'S/O Venkat Rao, 12 Lake Road, Bengaluru, Karnataka 560034' }];
+  aiCards = [{ type: 'Aadhaar', name: null, address: 'S/O Venkat Menon, 12 Lake Road, Bengaluru, Karnataka 560034' }];
   const back = await upload('G2');
   assert.equal(back.body.paired, true);
-  const p = (await call('/api/units/G2')).body.current.people.find((x) => x.name === 'Mohan Rao');
-  assert.equal(p.address, 'S/O Venkat Rao, 12 Lake Road, Bengaluru, Karnataka 560034');
+  const p = (await call('/api/units/G2')).body.current.people.find((x) => x.name === 'Ravi Menon');
+  assert.equal(p.address, 'S/O Venkat Menon, 12 Lake Road, Bengaluru, Karnataka 560034');
   assert.equal(p.id_type, 'Aadhaar');
   assert.ok(!p.drive_file_name.includes('Back'), 'the front stays as the ID photo');
   assert.ok(p.back_file_id && p.back_file_name.includes('Back'), 'and the back is saved as the second photo');
+  assert.equal((await call('/api/units/G2')).body.waitingIds.length, 0);
+  aiCards = null;
+});
+await test('someone who already has an ID: both kept, the new one waits for review', async () => {
+  const before = (await call('/api/units/G2')).body.current.people.find((x) => x.name === 'Mohan Rao');
+  aiCards = [{ type: 'Aadhaar', name: 'MOHAN RAO', address: null }];
+  const r = await upload('G2');
+  assert.deepEqual([r.body.matched, r.body.review, r.body.status], [0, true, 'new']);
+  let unit = (await call('/api/units/G2')).body;
+  assert.equal(unit.current.people.find((x) => x.id === before.id).drive_file_id, before.drive_file_id, 'existing photo kept');
+  const w = unit.waitingIds.find((x) => x.id === r.body.uploadId);
+  assert.deepEqual([w.review_name, w.review_front], ['Mohan Rao', before.drive_file_id]);
+  // Owner: "Use this one"
+  assert.equal((await call(`/api/id-uploads/${w.id}/attach`, { method: 'POST', body: { person_id: before.id } })).status, 200);
+  unit = (await call('/api/units/G2')).body;
+  assert.notEqual(unit.current.people.find((x) => x.id === before.id).drive_file_id, before.drive_file_id);
+  // Another copy: owner keeps the current one
+  const r2 = await upload('G2');
+  assert.equal(r2.body.review, true);
+  assert.equal((await call(`/api/id-uploads/${r2.body.uploadId}/dismiss`, { method: 'POST', body: {} })).status, 200);
   assert.equal((await call('/api/units/G2')).body.waitingIds.length, 0);
   aiCards = null;
 });
@@ -449,7 +469,8 @@ await test('when the model won’t answer in JSON, the printed lines are used', 
   aiLines = 'Government of India\nAsha Rao\nYear of Birth : XXXX\nFemale\nXXXX XXXX XXXX';
   const r = await upload('G2');
   assert.deepEqual(r.body.names, ['Asha Rao']);
-  assert.equal(r.body.matched, 1);
+  assert.equal(r.body.review, true, 'Asha already has an ID, so this one waits for review');
+  await call(`/api/id-uploads/${r.body.uploadId}/dismiss`, { method: 'POST', body: {} });
   aiLines = null;
 });
 await test('owner: "Add ID" on a person attaches to that person, with type and address read', async () => {

@@ -428,7 +428,9 @@ async function viewUnit(code) {
           ${w.address ? `<div class="d addr">📍 ${esc(w.address)}</div>` : ''}
           <div class="d">${fmtDate(w.taken_at)} · ${new Date(w.taken_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · by ${esc(w.uploaded_by)} ·
           <a href="https://drive.google.com/file/d/${esc(w.drive_file_id)}/view" target="_blank" rel="noopener">Open</a></div>
-          ${t ? `<div class="wact"><select data-attach-sel="${esc(w.id)}"><option value="">Attach to…</option>${t.people
+          ${w.review_name && t ? `<div class="review-note">⚠ <b>${esc(w.review_name)}</b> already has an ID on file${w.review_front ? ` (<a href="https://drive.google.com/file/d/${esc(w.review_front)}/view" target="_blank" rel="noopener">current front</a>${w.review_back ? `, <a href="https://drive.google.com/file/d/${esc(w.review_back)}/view" target="_blank" rel="noopener">back</a>` : ''})` : ''}. Compare and choose.</div>
+            <div class="wact"><button class="btn small primary" data-use-new="${esc(w.id)}" data-person="${esc(w.review_person_id)}">Use this one</button><button class="btn small" data-keep="${esc(w.id)}">Keep current</button></div>`
+          : t ? `<div class="wact"><select data-attach-sel="${esc(w.id)}"><option value="">Attach to…</option>${t.people
               .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.drive_file_id ? ' (has ID)' : ''}</option>`)
               .join('')}<option value="__new">＋ New person…</option></select>
             <button class="btn small danger" data-dismiss="${esc(w.id)}">Dismiss</button></div>`
@@ -544,6 +546,16 @@ function wireUnit(d) {
   const reload = () => viewUnit(unit.code);
   const on = (sel, fn) => $app.querySelectorAll(sel).forEach((el) => el.addEventListener('click', (e) => fn(el, e)));
 
+  on('[data-use-new]', async (el) => {
+    await api(`/api/id-uploads/${encodeURIComponent(el.dataset.useNew)}/attach`, { method: 'POST', body: { person_id: el.dataset.person } }).catch((e) => toast(e.message));
+    toast('New ID saved. The old one stays in Drive.', 3000);
+    reload();
+  });
+  on('[data-keep]', async (el) => {
+    await api(`/api/id-uploads/${encodeURIComponent(el.dataset.keep)}/dismiss`, { method: 'POST', body: {} }).catch((e) => toast(e.message));
+    toast('Kept the current ID. The new photo stays in Drive.', 3000);
+    reload();
+  });
   on('[data-dismiss]', async (el) => {
     if (!confirm('Dismiss this ID photo? It stays in your Drive.')) return;
     await api(`/api/id-uploads/${encodeURIComponent(el.dataset.dismiss)}/dismiss`, { method: 'POST', body: {} }).catch((e) => toast(e.message));
@@ -686,6 +698,11 @@ function wireUnit(d) {
       if (!file) return;
       try {
         const d = await uploadIdFile(unit.code, file);
+        if (d.review) {
+          closeSheet();
+          toast(`${d.names.join(', ')} already has an ID. The new photo is waiting under “New IDs to attach” for you to compare.`, 6000);
+          return reload();
+        }
         if (d.status === 'linked') {
           closeSheet();
           toast(`ID attached to ${d.names.join(', ')}, already listed here`, 4000);
@@ -1039,6 +1056,7 @@ const GT = {
     review: 'Check the photo', reviewHint: 'Is the ID clear and the name easy to read?',
     retake: 'Retake', submit: 'Submit', lockNote: 'After you submit, the ID can’t be changed or deleted.',
     submitted: 'Submitted', uploading: 'Submitting…', saved: 'Saved', nameRead: 'Name', noName: 'Name not read. That’s OK, it’s saved.',
+    reviewNote: 'Saved. The owner will review it.',
     busy: 'Sending the ID and reading the details…', busySub: 'Please wait. Don’t close the app.',
     addrRead: 'address read ✓', backPaired: 'Back of card: address added ✓', backSaved: 'Back of card: address read. Saved.',
     failed: 'Failed. Tap to try again', driveMissing: 'Google Drive isn’t linked yet. Please tell the owner.', none: 'Nothing submitted yet.',
@@ -1070,6 +1088,7 @@ const GT = {
     review: 'फोटो जाँच गर्नुहोस्', reviewHint: 'परिचयपत्र स्पष्ट छ र नाम पढ्न सकिन्छ?',
     retake: 'फेरि खिच्नुहोस्', submit: 'पठाउनुहोस्', lockNote: 'पठाएपछि परिचयपत्र बदल्न वा मेटाउन सकिँदैन।',
     submitted: 'पठाइएका', uploading: 'पठाउँदै…', saved: 'सुरक्षित भयो', nameRead: 'नाम', noName: 'नाम पढ्न सकिएन। ठीक छ, फोटो सुरक्षित भयो।',
+    reviewNote: 'सुरक्षित भयो। मालिकले जाँच गर्नुहुनेछ।',
     busy: 'परिचयपत्र पठाउँदै र विवरण पढ्दै…', busySub: 'कृपया पर्खनुहोस्। एप बन्द नगर्नुहोस्।',
     addrRead: 'ठेगाना पढियो ✓', backPaired: 'पछाडिको भाग: ठेगाना थपियो ✓', backSaved: 'पछाडिको भाग: ठेगाना पढियो। सुरक्षित भयो।',
     failed: 'असफल भयो। फेरि प्रयास गर्न थिच्नुहोस्', driveMissing: 'Google Drive अझै जोडिएको छैन। कृपया मालिकलाई भन्नुहोस्।', none: 'अहिलेसम्म केही पठाइएको छैन।',
@@ -1230,6 +1249,7 @@ async function viewIds() {
             <div class="d">${
               s.status === 'uploading' ? T.uploading
               : s.status === 'failed' ? `<span style="color:var(--red)">${s.drive ? T.driveMissing : T.failed}${!s.drive && s.error ? `<br><small>${esc(s.error)}</small>` : ''}</span>`
+              : s.review ? `${T.nameRead}: <b>${esc(s.names.join(', '))}</b> · ${T.reviewNote}`
               : s.names.length ? `${s.idType ? `${esc(s.idType)} · ` : ''}${T.nameRead}: <b>${esc(s.names.join(', '))}</b>${s.address ? ` · ${T.addrRead}` : ''}`
               : s.address ? (s.paired ? T.backPaired : T.backSaved) : s.isPdf ? T.saved : T.noName
             }</div></div>
@@ -1302,6 +1322,7 @@ async function sendId(item) {
     item.idType = data.idType || null;
     item.address = Boolean(data.address);
     item.paired = Boolean(data.paired);
+    item.review = Boolean(data.review);
     item.draft = null; // locked: nothing kept to resend or change
   } catch (e) {
     item.status = 'failed';
