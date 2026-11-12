@@ -994,7 +994,7 @@ async function viewIds() {
             <div class="main"><div class="t">${esc(s.unit)} · ${new Date(s.at).toLocaleTimeString(lang === 'ne' ? 'ne-NP' : 'en-IN', { hour: '2-digit', minute: '2-digit' })}</div>
             <div class="d">${
               s.status === 'uploading' ? T.uploading
-              : s.status === 'failed' ? `<span style="color:var(--red)">${s.drive ? T.driveMissing : T.failed}</span>`
+              : s.status === 'failed' ? `<span style="color:var(--red)">${s.drive ? T.driveMissing : T.failed}${!s.drive && s.error ? `<br><small>${esc(s.error)}</small>` : ''}</span>`
               : s.names.length ? `${T.nameRead}: <b>${esc(s.names.join(', '))}</b>` : s.isPdf ? T.saved : T.noName
             }</div></div>
             ${s.status === 'saved' ? '<span class="chip paid">✓</span>' : ''}</div>`
@@ -1038,13 +1038,15 @@ async function viewIds() {
 
 async function sendId(item) {
   item.status = 'uploading';
+  item.error = '';
   const redraw = () => location.hash.startsWith('#/ids') && viewIds().catch(() => {});
   redraw();
   try {
     const form = new FormData();
     form.append('unit', item.unit);
     form.append('takenAt', item.draft.takenAt);
-    if (item.draft.isPdf) form.append('photo', item.draft.file, 'id.pdf');
+    // Some computers don't label PDFs; say what it is so the server accepts it.
+    if (item.draft.isPdf) form.append('photo', new Blob([item.draft.file], { type: 'application/pdf' }), 'id.pdf');
     else {
       const p = item.prepared || (item.prepared = await preparePhoto(item.draft.file).catch(() => ({ photo: item.draft.file, preview: null, thumb: '' })));
       if (p.thumb) item.thumb = p.thumb;
@@ -1055,13 +1057,15 @@ async function sendId(item) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       item.drive = data.error === 'drive_not_linked';
-      throw new Error(data.message || data.error || 'failed');
+      item.error = data.message || data.error || `Error ${res.status}`;
+      throw new Error(item.error);
     }
     item.status = 'saved';
     item.names = data.names || [];
     item.draft = null; // locked: nothing kept to resend or change
-  } catch {
+  } catch (e) {
     item.status = 'failed';
+    if (!item.error) item.error = navigator.onLine === false ? 'No internet' : e?.message || '';
   }
   redraw();
 }

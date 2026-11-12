@@ -169,7 +169,15 @@ export async function handleIdUpload(request: Request, env: Env, email: string) 
   if (!unit) throw new ValidationError('Choose the unit first');
   const photo = form.get('photo');
   if (!photo || typeof photo === 'string') throw new ValidationError('No photo attached');
-  const blob = photo as Blob;
+  let blob = photo as Blob;
+  const fileName0 = (photo as File).name || '';
+  // Some browsers send PDFs (and phone photos) without a type; go by the file's name or first bytes.
+  if (!blob.type || blob.type === 'application/octet-stream') {
+    const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    const isPdfBytes = head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46; // %PDF
+    const type = isPdfBytes || /\.pdf$/i.test(fileName0) ? 'application/pdf' : head[0] === 0xff && head[1] === 0xd8 ? 'image/jpeg' : '';
+    if (type) blob = new Blob([blob], { type });
+  }
   const isPdf = blob.type === 'application/pdf';
   if (!isPdf && !/^image\/(jpeg|png|webp|heic|heif)$/.test(blob.type || '')) throw new ValidationError('The file must be a photo or a PDF');
   if (blob.size > MAX_BYTES) throw new ValidationError('File is too large (over 10 MB)');
@@ -193,13 +201,19 @@ export async function handleIdUpload(request: Request, env: Env, email: string) 
   const names = await readNames(env, !isPdf && typeof preview === 'string' && preview.length > 100 && preview.length < MAX_AI_CHARS ? preview : null);
 
   const t = ist(takenAt);
-  const root = await ensureFolder(token, ROOT);
-  const ids = await ensureFolder(token, IDS, root);
-  const unitFolder = await ensureFolder(token, code, ids);
   const ext = isPdf ? 'pdf' : blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : blob.type.startsWith('image/hei') ? 'heic' : 'jpg';
   const label = names.length ? safeName(names.join(' & ')) : isPdf ? 'PDF' : 'Name not read';
   const fileName = `${code} - ${t.date} ${t.time} - ${label}.${ext}`;
-  const file = await uploadFile(token, { name: fileName, mimeType: blob.type, parents: [unitFolder] }, blob);
+  let file: { id: string };
+  try {
+    const root = await ensureFolder(token, ROOT);
+    const ids = await ensureFolder(token, IDS, root);
+    const unitFolder = await ensureFolder(token, code, ids);
+    file = await uploadFile(token, { name: fileName, mimeType: blob.type, parents: [unitFolder] }, blob);
+  } catch (e: any) {
+    console.error('Drive upload failed', e);
+    return { status: 502, body: { success: false, error: 'drive_failed', message: `Google Drive refused the file: ${String(e?.message || e).slice(0, 200)}` } };
+  }
 
   // Attach to people listed in the unit's current tenancy when the names match.
   const tenancy = await env.DB.prepare('SELECT id FROM tenancies WHERE unit_code = ? AND end_date IS NULL').bind(code).first<{ id: string }>();

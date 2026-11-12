@@ -335,6 +335,16 @@ await test('IDs for an empty unit wait until the tenant is added; they can be di
   assert.equal((await call(`/api/id-uploads/${w.id}/dismiss`, { method: 'POST', body: {} })).status, 200);
   assert.equal((await call('/api/units/G3')).body.waitingIds.length, 0);
 });
+await test('a PDF sent without a file type is still accepted', async () => {
+  const form = new FormData();
+  form.append('unit', 'G2');
+  form.append('photo', new Blob([new TextEncoder().encode('%PDF-1.4 ' + 'x'.repeat(3000))]), 'aadhaar.pdf');
+  const res = await worker.fetch(new Request(BASE + '/api/id-uploads', { method: 'POST', headers: { Cookie: guard }, body: form }), env);
+  assert.equal(res.status, 200, await res.clone().text());
+  const w = (await call('/api/units/G2')).body.waitingIds.find((x) => x.is_pdf);
+  assert.ok(w.file_name.endsWith('.pdf'));
+  await call(`/api/id-uploads/${w.id}/dismiss`, { method: 'POST', body: {} });
+});
 await test('the guard can upload but not attach, dismiss or see IDs', async () => {
   assert.equal((await call('/api/units/G2', { cookie: guard })).status, 403);
   assert.equal((await call('/api/id-uploads/x/dismiss', { cookie: guard, method: 'POST', body: {} })).status, 403);
