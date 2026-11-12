@@ -23,7 +23,7 @@
     {
       "binding": "DB",
       "database_name": "challaghatta-rent",
-      "database_id": "PASTE-YOUR-D1-DATABASE-ID-HERE",
+      "database_id": "d7b71d89-7cc4-441b-92df-554ba2558641",
       "migrations_dir": "migrations"
     }
   ],

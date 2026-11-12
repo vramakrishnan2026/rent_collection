@@ -23,7 +23,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 
 ### 1. Cloudflare (same account as the Finance Tracker)
 
-1. **Storage & Databases › D1 › Create**, named `challaghatta-rent`. Copy its **Database ID** into `wrangler.jsonc` in place of `PASTE-YOUR-D1-DATABASE-ID-HERE`, then commit.
+1. **Storage & Databases › D1 › Create**, named `challaghatta-rent`. Its Database ID is already in `wrangler.jsonc` (`d7b71d89-…`).
 2. **Workers & Pages › Create › Import a repository**, and pick this repo.
    - Build command: *(leave empty)*
    - Deploy command: `npm run deploy`. This applies database changes, then deploys.
