@@ -21,7 +21,12 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - If the name matches someone listed in that unit in full, the photo is attached to them automatically.
   - Otherwise it waits under **New IDs from security** on the unit's page (the dashboard shows which units), where you attach it to a person, add a new person, or dismiss it.
   - Her screens can switch between English and Nepali.
-- **Security guard:** she signs in with her own Gmail and sees only the rent status and the Add ID screen. Each unit shows **Paid**, or **Pending** in red with the number of months and "Remind tenant". He never sees amounts.
+- **Security guard (no Gmail needed):** in **Settings › Security phones › Add a phone** you get a one-time 6-digit code, valid for 24 hours, plus a link to WhatsApp to her.
+  - The code signs in that phone only, for 400 days, and it sees only rent status and Add ID.
+  - **Remove** signs the phone out at once. Ten wrong codes cancel every open code.
+  - On Android, she opens the link in Chrome, then ⋮ › Add to Home screen.
+  - On iPhone, she adds the app to the Home Screen *first*, opens it, taps "Security guard? Enter your code" and types the code. iPhones keep a separate sign-in for Home Screen apps.
+  - A guard with a Gmail account can still be listed in `SECURITY_EMAILS` instead. Each unit shows **Paid**, or **Pending** in red with the number of months and "Remind tenant". He never sees amounts.
 - **Moving out:** record the move-out date (no rent falls due after it), then the deposit refund. A tenant who moved out still owing stays on the pending list.
 
 ## Setup (one time)
@@ -62,7 +67,7 @@ Add these under Cloudflare › the Worker › **Settings › Variables and Secre
 |---|---|
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from step 2 |
 | `OWNER_EMAILS` | your Gmail (comma-separate to add more) |
-| `SECURITY_EMAILS` | the security guard's Gmail |
+| `SECURITY_EMAILS` | optional: a guard's Gmail (or pair her phone with a code instead) |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | from step 3 (`rzp_test_…` for now) |
 | `RAZORPAY_WEBHOOK_SECRET` | the webhook secret from step 3 |
 | `SESSION_SECRET` | optional: any long random string |
@@ -88,6 +93,7 @@ Until Razorpay is connected, the Send link buttons show a message instead, and y
 - `worker/rent.ts`: the rent rules (due dates, 5% increases, oldest-first allocation, financial year)
 - `worker/db.ts`: units, tenancies, people, payments, the dashboard and the security view
 - `worker/razorpay.ts`: payment links, the WhatsApp/SMS message, the webhook (signature-checked) and the daily check
+- `worker/devices.ts`: security phones paired with one-time codes (no Gmail)
 - `worker/ids.ts`: the guard's Add ID uploads, name reading (Workers AI), matching to people, and attach/dismiss
 - `worker/drive.ts`: ID photos to Drive (`drive.file` scope: the app sees only its own files)
 - `public/`: the app (plain HTML, CSS and JavaScript, no build step)

@@ -704,7 +704,7 @@ async function viewMenu() {
   const s = await api('/api/settings');
   const rz = s.razorpay;
   shell(
-    'More',
+    'Settings',
     esc(me.email),
     `<div class="card"><h2>Razorpay</h2>
       <p style="margin-top:0"><b>${rz.configured ? (rz.mode === 'live' ? 'Connected · live' : 'Connected · test mode') : 'Not connected'}</b></p>
@@ -716,11 +716,68 @@ async function viewMenu() {
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
       ${s.drive.connected ? '<button class="btn small" data-drive-off>Unlink</button>' : `<a class="btn small primary" href="/api/drive/connect" ${s.drive.configured ? '' : 'aria-disabled="true"'}>Link Google Drive</a>`}</div>
-    <div class="card"><h2>Security guard</h2><p class="note" style="margin-top:0">He signs in with his Gmail (added to SECURITY_EMAILS) and sees only this screen.</p>
-      <a class="btn small" href="#/security">Open his screen</a></div>
+    <div class="card"><div class="card-h"><h2>Security phones</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
+      <p class="note" style="margin-top:0">The guard’s phone signs in with a one-time code, no Gmail needed. It sees only rent status and Add ID.</p>
+      <div class="list" data-devices><p class="note">Loading…</p></div>
+      <a class="btn small" href="#/security" style="margin-top:.6rem">Open the security screen</a></div>
     <div class="card"><h2>Data</h2><a class="btn small" href="/api/export" download>Download backup</a></div>
     <a class="btn block" href="/auth/logout">Sign out</a>`,
     'menu'
+  );
+  const loadDevices = async () => {
+    const box = $app.querySelector('[data-devices]');
+    if (!box) return;
+    const r = await api('/api/devices').catch(() => null);
+    if (!r) return (box.innerHTML = '<p class="note">Couldn’t load phones.</p>');
+    box.innerHTML =
+      (r.devices.length
+        ? r.devices
+            .map(
+              (d) => `<div class="row"><span class="code">📱</span><div class="main"><div class="t">${esc(d.label)}</div>
+              <div class="d">Added ${fmtDate(d.created_at)}${d.last_seen ? ` · last used ${ago(d.last_seen)}` : ''}</div></div>
+              <button class="btn small danger" data-unpair="${esc(d.id)}" data-label="${esc(d.label)}">Remove</button></div>`
+            )
+            .join('')
+        : '<p class="note">No phones paired yet.</p>') +
+      (r.openCodes.length ? `<p class="note">${plural(r.openCodes.length, 'code')} waiting to be used. <a href="#" data-cancel-codes>Cancel</a></p>` : '');
+    box.querySelectorAll('[data-unpair]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        if (!confirm(`Remove ${b.dataset.label}? That phone is signed out straight away.`)) return;
+        await api(`/api/devices/${encodeURIComponent(b.dataset.unpair)}`, { method: 'DELETE' }).catch((e) => toast(e.message));
+        loadDevices();
+      })
+    );
+    box.querySelector('[data-cancel-codes]')?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await api('/api/devices/codes', { method: 'DELETE' });
+      loadDevices();
+    });
+  };
+  loadDevices();
+  $app.querySelector('[data-pair]').addEventListener('click', () =>
+    openSheet(
+      `<h2>Add a security phone</h2><form>
+        <label class="f">Name for this phone <input name="label" maxlength="40" value="Security" placeholder="e.g. Security – Lakshmi"></label>
+        <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Get code</button></div></form>`,
+      async (v) => {
+        const r = await api('/api/devices/pair', { method: 'POST', body: v });
+        const msg = `Challaghatta Home security app.\nOpen this link on your phone: ${r.link}\nOr open ${location.origin} and enter the code ${r.code}.`;
+        const sheet = $sheet.querySelector('.sheet');
+        sheet.innerHTML = `<h2>Code for ${esc(r.label)}</h2>
+          <div class="paircode">${r.code.slice(0, 3)} ${r.code.slice(3)}</div>
+          <p class="note" style="text-align:center">Works once, until ${new Date(r.expiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</p>
+          <div class="actions" style="margin:.8rem 0"><a class="btn green" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Send on WhatsApp</a><button class="btn" data-copy>Copy link</button></div>
+          <div class="msg"><b>On her phone</b>
+• Android: open the link in Chrome, then ⋮ › Add to Home screen.
+• iPhone: open ${esc(location.host)} in Safari, Share › Add to Home Screen, open the new icon, tap “Security guard? Enter your code” and type the code.</div>
+          <button class="btn block" data-close>Done</button>`;
+        sheet.querySelector('[data-copy]').addEventListener('click', async () => {
+          await navigator.clipboard.writeText(r.link).catch(() => {});
+          toast('Link copied');
+        });
+        $sheet.querySelector('.backdrop').addEventListener('click', (e) => e.target.closest('[data-close]') && loadDevices());
+      }
+    )
   );
   $app.querySelector('[data-clear-test]').addEventListener('click', async () => {
     if (!confirm('Delete every payment made with Razorpay test keys?')) return;
@@ -819,7 +876,7 @@ async function viewSecurity() {
           .join('')}</div>`
       )
       .join('')}</div>
-    ${me.role === 'owner' ? '' : `<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">${T.signOut}</a>`}`,
+    ${me.role === 'owner' || me.device ? '' : `<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">${T.signOut}</a>`}`,
     'security'
   );
   wireLang(viewSecurity);
@@ -897,7 +954,7 @@ async function viewIds() {
           .join('')
       : `<p class="note">${T.none}</p>`
   }</div></div>
-  ${me.role === 'owner' ? '' : `<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">${T.signOut}</a>`}`;
+  ${me.role === 'owner' || me.device ? '' : `<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">${T.signOut}</a>`}`;
   shell(T.addId, `Challaghatta Home`, top + body, 'security');
   wireLang(viewIds);
 

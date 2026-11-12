@@ -341,5 +341,50 @@ await test('the guard can upload but not attach, dismiss or see IDs', async () =
   assert.equal((await upload('ZZ9')).status, 400);
 });
 
+// --- security phones without Gmail
+console.log('Security phones');
+const pair = async (code) => {
+  const form = new FormData();
+  form.append('code', code);
+  const res = await worker.fetch(new Request(BASE + '/auth/pair', { method: 'POST', body: form, redirect: 'manual' }), env);
+  const set = res.headers.get('Set-Cookie') || '';
+  return { status: res.status, cookie: (set.match(/cr_device=([^;]*)/) || [])[1], location: res.headers.get('Location') };
+};
+let phone;
+await test('a one-time code pairs the phone, which then sees only the security screens', async () => {
+  const { body } = await call('/api/devices/pair', { method: 'POST', body: { label: 'Security – Lakshmi' } });
+  assert.match(body.code, /^\d{6}$/);
+  assert.ok(body.link.endsWith(`/auth/pair?code=${body.code}`));
+  const r = await pair(body.code);
+  assert.equal(r.status, 302);
+  assert.equal(r.location, '/#/security');
+  phone = `cr_device=${r.cookie}`;
+  const me = await call('/api/me', { cookie: phone });
+  assert.deepEqual([me.body.role, me.body.device], ['security', true]);
+  assert.equal((await call('/api/security', { cookie: phone })).status, 200);
+  assert.equal((await call('/api/dashboard', { cookie: phone })).status, 403);
+  assert.equal((await call('/', { cookie: phone })).status, 200);
+  assert.equal((await pair(body.code)).status, 400, 'a code works only once');
+});
+await test('the paired phone can submit IDs, recorded under its name', async () => {
+  aiNames = [];
+  assert.equal((await upload('G2', phone)).status, 200);
+  const w = (await call('/api/units/G2')).body.waitingIds[0];
+  assert.equal(w.uploaded_by, 'Security phone (Security – Lakshmi)');
+});
+await test('removing the phone locks it out at once', async () => {
+  const { body } = await call('/api/devices');
+  assert.equal(body.devices.length, 1);
+  assert.equal((await call(`/api/devices/${body.devices[0].id}`, { method: 'DELETE' })).status, 200);
+  assert.equal((await call('/api/security', { cookie: phone })).status, 401);
+});
+await test('ten wrong codes cancel every open code', async () => {
+  const { body } = await call('/api/devices/pair', { method: 'POST', body: { label: 'Night guard' } });
+  const wrong = body.code === '000000' ? '111111' : '000000';
+  for (let i = 0; i < 9; i++) assert.equal((await pair(wrong)).status, 400);
+  assert.equal((await pair(wrong)).status, 429);
+  assert.equal((await pair(body.code)).status, 400, 'the real code no longer works');
+});
+
 globalThis.fetch = realFetch;
 console.log(`\n${passed} passed`);

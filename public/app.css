@@ -269,3 +269,4 @@ img.thumb { width: 2.8rem; height: 2.8rem; object-fit: cover; border-radius: .6r
 .wact select { padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--bg); font-size: .85rem; }
 .banner a { color: inherit; }
 @media (min-width: 1024px) { .seg { max-width: 30rem; } .review, .big-btn, [data-gallery] { max-width: 34rem; } }
+.paircode { text-align: center; font-size: 2.6rem; font-weight: 900; letter-spacing: .3rem; padding: .9rem; background: var(--soft); border-radius: 1rem; font-variant-numeric: tabular-nums; }

@@ -27,6 +27,7 @@ import {
 import * as drive from './drive.ts';
 import { WEBHOOK_PATH, handleWebhook, linkForTenancy, markSent, razorpayStatus, refreshLink, syncOpenLinks } from './razorpay.ts';
 import { todayIST } from './rent.ts';
+import { PAIR_PATH, cancelCodes, createPairCode, currentDevice, handlePair, listDevices, removeDevice } from './devices.ts';
 import { attachUpload, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
 
 const json = (data: unknown, status = 200) =>
@@ -66,7 +67,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   const today = todayIST();
   if (method !== 'GET' && !sameOrigin(request, url)) return error('Not allowed', 403);
 
-  if (pathname === '/api/me' && method === 'GET') return json({ email: user.email, role: user.role, name: user.name ?? null });
+  if (pathname === '/api/me' && method === 'GET') return json({ email: user.email, role: user.role, name: user.name ?? null, device: Boolean(user.device) });
 
   // The security guard's screen (owners can open it too).
   if (pathname === '/api/security' && method === 'GET') return json(await securityView(env.DB, today));
@@ -98,6 +99,18 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   }
   if (pathname === '/api/drive/disconnect' && method === 'POST') {
     await drive.disconnect(env);
+    return json({ success: true });
+  }
+
+  // Security phones (paired with a one-time code, no Gmail)
+  if (pathname === '/api/devices' && method === 'GET') return json(await listDevices(env));
+  if (pathname === '/api/devices/pair' && method === 'POST') return json(await createPairCode(env, await readJson(request), url.origin));
+  if (pathname === '/api/devices/codes' && method === 'DELETE') {
+    await cancelCodes(env);
+    return json({ success: true });
+  }
+  if (pathname.startsWith('/api/devices/') && method === 'DELETE') {
+    await removeDevice(env, decodeURIComponent(pathname.slice('/api/devices/'.length)));
     return json({ success: true });
   }
 
@@ -208,12 +221,18 @@ export default {
     // Razorpay calls this directly; it is checked by signature instead of sign-in.
     if (url.pathname === WEBHOOK_PATH && request.method === 'POST') return handleWebhook(request, env, env.DB);
 
+    if (url.pathname === PAIR_PATH) return handlePair(request, env, url);
+
     const authResponse = await handleAuth(request, env, url);
     if (authResponse) return authResponse;
 
     if (!isApi && isPublicPath(url.pathname)) return env.ASSETS.fetch(request);
 
-    const user = await currentUser(request, env);
+    let user: User | null = await currentUser(request, env);
+    if (!user) {
+      const phone = await currentDevice(request, env);
+      if (phone) user = { email: `Security phone (${phone.label})`, role: 'security', name: phone.label, device: true };
+    }
     if (!user) {
       if (isApi) return error('Please sign in', 401);
       return redirect(`${LOGIN_PATH}?next=${encodeURIComponent(url.pathname + url.search)}`);
