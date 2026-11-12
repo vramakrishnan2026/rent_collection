@@ -1,5 +1,5 @@
 import type { D1Database } from './env';
-import { addMonths, buildLedger, duePeriods, financialYear, isValidDate, type Ledger } from './rent.ts';
+import { addMonths, buildLedger, financialYear, isValidDate, monthPeriods, monthLabel, type Ledger } from './rent.ts';
 
 export class ValidationError extends Error {}
 export class NotFoundError extends Error {}
@@ -72,6 +72,7 @@ export interface TenancyRow {
   deposit: number;
   deposit_refund: number | null;
   deposit_refunded_on: string | null;
+  deposit_maintenance: number | null;
   notes: string | null;
   created_at: string;
 }
@@ -156,7 +157,10 @@ function tenancySummary(t: TenancyRow, s: State, today: string) {
     deposit: t.deposit,
     deposit_refund: t.deposit_refund,
     deposit_refunded_on: t.deposit_refunded_on,
+    deposit_maintenance: t.deposit_maintenance,
     notes: t.notes,
+    collectable: ledger.collectable,
+    owedThroughEnd: ledger.owedThroughEnd,
     currentRent: ledger.currentRent,
     outstanding: ledger.outstanding,
     pendingMonths: ledger.pendingMonths,
@@ -188,7 +192,7 @@ export async function overview(db: D1Database, today: string) {
   const former = s.tenancies
     .filter((t) => !isOpen(t, today))
     .map((t) => tenancySummary(t, s, today))
-    .filter((t) => t.outstanding > 0);
+    .filter((t) => t.owedThroughEnd > 0);
   return { today, units, former, state: s };
 }
 
@@ -213,8 +217,9 @@ export async function dashboard(db: D1Database, today: string) {
     months.push({ month: m, due: 0, collected: 0 });
   }
   const byMonth = new Map(months.map((m) => [m.month, m]));
+  // Post-paid: a month's rent "falls due" in the month its due date (the 10th of the next month) is in.
   for (const t of state.tenancies) {
-    for (const p of duePeriods(t, today)) {
+    for (const p of monthPeriods(t, today)) {
       const row = byMonth.get(p.due.slice(0, 7));
       if (row) row.due += p.rent;
     }
@@ -227,7 +232,7 @@ export async function dashboard(db: D1Database, today: string) {
   const current = units.filter((u) => u.tenancy && u.status !== 'free');
   const pending = [
     ...units.filter((u) => u.status === 'pending').map((u) => ({ ...pendingItem(u.tenancy!), unit: u.code, former: false })),
-    ...former.map((t) => ({ ...pendingItem(t), unit: t.unit_code, former: true })),
+    ...former.map((t) => ({ ...pendingItem(t), amount: t.owedThroughEnd, months: Math.max(1, t.pendingMonths), unit: t.unit_code, former: true })),
   ].sort((a, b) => b.months - a.months || b.amount - a.amount);
 
   const rentable = units.filter((u) => !u.rent_free);
@@ -420,16 +425,59 @@ export async function updateTenancy(db: D1Database, id: string, body: any) {
 export async function endTenancy(db: D1Database, id: string, body: any) {
   const t = await getTenancy(db, id);
   const end = date(body?.end_date, 'Move-out date');
-  if (end <= t.start_date) throw new ValidationError('Move-out date must be after the move-in date');
+  if (end < t.start_date) throw new ValidationError('Move-out date can’t be before the move-in date');
   await db.prepare('UPDATE tenancies SET end_date = ?, updated_at = ? WHERE id = ?').bind(end, nowIso(), id).run();
 }
 
-export async function refundDeposit(db: D1Database, id: string, body: any) {
+/** What the deposit settlement looks like for a tenant who has moved out (or is moving out). */
+export async function settlementPreview(db: D1Database, id: string, today: string) {
   const t = await getTenancy(db, id);
-  const amount = rupees(body?.amount, 'Refund amount');
-  if (amount > t.deposit) throw new ValidationError('Refund can’t be more than the deposit');
+  if (!t.end_date) throw new ValidationError('Record the move-out date first');
+  const paid = await db.prepare('SELECT COALESCE(SUM(amount), 0) AS paid FROM payments WHERE tenancy_id = ?').bind(id).first<{ paid: number }>();
+  const ledger = buildLedger(t, paid?.paid || 0, today);
+  const maintenance = Math.min(t.deposit, ledger.currentRent);
+  const owed = Math.max(0, ledger.owedThroughEnd);
+  const fromDeposit = Math.min(owed, Math.max(0, t.deposit - maintenance));
+  return {
+    deposit: t.deposit,
+    maintenance,
+    owed,
+    unpaidMonths: ledger.periods.filter((p) => p.paid < p.rent).map((p) => ({ month: monthLabel(p.month), amount: p.rent - p.paid, days: p.days, full: p.full })),
+    fromDeposit,
+    refund: t.deposit - maintenance - fromDeposit,
+    stillOwed: owed - fromDeposit,
+    done: Boolean(t.deposit_refunded_on),
+  };
+}
+
+/**
+ * Settles the deposit at move-out: keeps the maintenance amount (one month's rent by default),
+ * optionally takes the rent still owed from the deposit (recorded as a payment), and records the refund.
+ */
+export async function settleDeposit(db: D1Database, id: string, body: any, by: string, today: string) {
+  const t = await getTenancy(db, id);
+  if (!t.end_date) throw new ValidationError('Record the move-out date first');
+  if (t.deposit_refunded_on) throw new ValidationError('The deposit has already been settled');
   const on = date(body?.date, 'Refund date');
-  await db.prepare('UPDATE tenancies SET deposit_refund = ?, deposit_refunded_on = ?, updated_at = ? WHERE id = ?').bind(amount, on, nowIso(), id).run();
+  const maintenance = rupees(body?.maintenance ?? 0, 'Maintenance');
+  if (maintenance > t.deposit) throw new ValidationError('Maintenance can’t be more than the deposit');
+  const preview = await settlementPreview(db, id, today);
+  const fromDeposit = body?.take_rent === false ? 0 : Math.min(preview.owed, t.deposit - maintenance);
+  const refund = t.deposit - maintenance - fromDeposit;
+  const stmts = [
+    db
+      .prepare('UPDATE tenancies SET deposit_maintenance = ?, deposit_refund = ?, deposit_refunded_on = ?, updated_at = ? WHERE id = ?')
+      .bind(maintenance, refund, on, nowIso(), id),
+  ];
+  if (fromDeposit > 0) {
+    stmts.push(
+      db
+        .prepare("INSERT INTO payments (id, tenancy_id, amount, paid_on, method, reference, note, created_by) VALUES (?, ?, ?, ?, 'other', 'From deposit', 'Rent taken from the deposit at move-out', ?)")
+        .bind(newId(), id, fromDeposit, on, by)
+    );
+  }
+  await db.batch(stmts);
+  return { maintenance, fromDeposit, refund };
 }
 
 export async function deleteTenancy(db: D1Database, id: string) {

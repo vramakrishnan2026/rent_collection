@@ -32,6 +32,7 @@ const todayIST = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0,
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const METHOD = { razorpay: 'Razorpay', upi: 'UPI', cash: 'Cash', bank: 'Bank transfer', other: 'Other' };
 const ID_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving licence', 'Voter ID', 'Other'];
+const MONTH_CHIP = { paid: ['paid', 'Paid'], partial: ['partial', 'Part paid'], pending: ['pending', 'Pending'], running: ['vacant', 'Running'], 'to-collect': ['upcoming', 'To collect'] };
 const STATUS = { paid: 'Paid', pending: 'Pending', vacant: 'Vacant', free: 'Rent-free', upcoming: 'Moving in' };
 
 function toast(text) {
@@ -354,7 +355,7 @@ function tenancyForm(t, rentFree, prefill = null) {
     <label class="f">Advance / deposit (₹, refundable) <input name="deposit" inputmode="numeric" value="${esc(t?.deposit ?? '')}"></label>
     ${t ? '' : `<label class="f">Everyone living there <small>(one name per line)</small><textarea name="people" rows="3" placeholder="Same as tenant name if left empty">${esc((prefill?.people || []).join('\n'))}</textarea></label>`}
     <label class="f">Notes <textarea name="notes" rows="2" maxlength="500">${esc(t?.notes)}</textarea></label>
-    ${rentFree ? '' : '<p class="note">Rent is due on the move-in day every month and goes up 5% every 11 months.</p>'}
+    ${rentFree ? '' : '<p class="note">Rent is post-paid for each calendar month (a part month is rent ÷ 30 × days), due by the 10th of the next month. It goes up 5% from the 1st after every 11 months. At move-out, one month’s rent is kept from the deposit for maintenance.</p>'}
     <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
   </form>`;
 }
@@ -431,8 +432,9 @@ async function viewUnit(code) {
         t.periods.length
           ? t.periods
               .map(
-                (p) => `<div class="row"><div class="main"><div class="t">${monthOf(p.due)}</div><div class="d">Due ${fmtDate(p.due)}${p.status === 'partial' ? ` · ${inr(p.paid)} paid` : ''}</div></div>
-                <div class="amt">${inr(p.rent)}</div><span class="chip ${p.status}">${p.status === 'partial' ? 'Part paid' : p.status === 'paid' ? 'Paid' : 'Pending'}</span></div>`
+                (p) => `<div class="row"><div class="main"><div class="t">${monthOf(p.month)}</div>
+                <div class="d">${p.full ? '' : `${p.days} days (${Number(p.from.slice(8))}–${Number(p.to.slice(8))}) · `}${p.status === 'running' ? 'This month · collect after it ends' : `Due by ${fmtDate(p.due)}`}${p.status === 'partial' ? ` · ${inr(p.paid)} paid` : ''}</div></div>
+                <div class="amt">${inr(p.rent)}</div><span class="chip ${MONTH_CHIP[p.status][0]}">${MONTH_CHIP[p.status][1]}</span></div>`
               )
               .join('')
           : '<p class="note">No rent has fallen due yet.</p>'
@@ -461,11 +463,13 @@ async function viewUnit(code) {
     body += `<h2 class="sec">Past tenants</h2><div class="card"><div class="list">${past
       .map(
         (p) => `<div class="row"><div class="main"><div class="t">${esc(p.contact_name)}</div><div class="d">${fmtDate(p.start_date)} – ${fmtDate(p.end_date)} · deposit ${inr(p.deposit)}${
-          p.deposit_refunded_on ? `, ${inr(p.deposit_refund)} refunded ${fmtDate(p.deposit_refunded_on)}` : ', not refunded yet'
+          p.deposit_refunded_on
+            ? `: ${p.deposit_maintenance ? `${inr(p.deposit_maintenance)} kept for maintenance, ` : ''}${inr(p.deposit_refund)} refunded ${fmtDate(p.deposit_refunded_on)}`
+            : ', not settled yet'
         }</div></div>
-        ${p.outstanding > 0 ? `<div class="amt" style="color:var(--red)">${inr(p.outstanding)}</div>` : ''}
-        ${p.deposit_refunded_on ? '' : `<button class="btn small" data-refund="${esc(p.id)}" data-deposit="${p.deposit}" data-owed="${Math.max(0, p.outstanding)}">Refund</button>`}
-        ${p.outstanding > 0 ? `<button class="btn small" data-pay-past="${esc(p.id)}" data-owed="${p.outstanding}">Record payment</button>` : ''}</div>`
+        ${p.owedThroughEnd > 0 ? `<div class="amt" style="color:var(--red)">${inr(p.owedThroughEnd)}</div>` : ''}
+        ${p.deposit_refunded_on ? '' : `<button class="btn small primary" data-settle="${esc(p.id)}">Settle deposit</button>`}
+        ${p.owedThroughEnd > 0 ? `<button class="btn small" data-pay-past="${esc(p.id)}" data-owed="${p.owedThroughEnd}">Record payment</button>` : ''}</div>`
       )
       .join('')}</div></div>`;
   }
@@ -558,24 +562,11 @@ function wireUnit(d) {
     await api(`/api/units/${encodeURIComponent(unit.code)}`, { method: 'PUT', body: { rent_free: el.checked, note: el.checked ? unit.note || GUARD : unit.note === GUARD ? '' : unit.note } }).catch((e) => toast(e.message));
     reload();
   });
-  on('[data-refund]', (el) =>
-    openSheet(
-      `<h2>Refund deposit</h2><form>
-        <p class="note">Deposit ${inr(el.dataset.deposit)}${Number(el.dataset.owed) ? `. They still owe ${inr(el.dataset.owed)} in rent: take it off the refund, then record it below as a payment.` : '.'}</p>
-        <div class="two"><label class="f">Amount refunded (₹) <input name="amount" inputmode="numeric" required value="${Math.max(0, el.dataset.deposit - el.dataset.owed)}"></label>
-        <label class="f">Date <input type="date" name="date" required value="${todayIST()}"></label></div>
-        <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`,
-      async (v) => {
-        await api(`/api/tenancies/${encodeURIComponent(el.dataset.refund)}/refund`, { method: 'POST', body: v });
-        closeSheet();
-        reload();
-      }
-    )
-  );
+  on('[data-settle]', (el) => settleSheet(el.dataset.settle, reload));
   on('[data-pay-past]', (el) => paymentSheet(el.dataset.payPast, Number(el.dataset.owed), reload));
   if (!t) return;
 
-  on('[data-act=pay]', () => paymentSheet(t.id, t.outstanding > 0 ? t.outstanding : t.nextRent || t.currentRent, reload));
+  on('[data-act=pay]', () => paymentSheet(t.id, t.collectable > 0 ? t.collectable : t.nextRent || t.currentRent, reload));
   on('[data-act=edit]', () =>
     openSheet(`<h2>Edit · ${esc(unit.code)}</h2>${tenancyForm(t, unit.rent_free)}`, async (v) => {
       await api(`/api/tenancies/${encodeURIComponent(t.id)}`, { method: 'PUT', body: tenancyBody(v) });
@@ -588,14 +579,15 @@ function wireUnit(d) {
     openSheet(
       `<h2>Move out · ${esc(t.contact_name)}</h2><form>
         <label class="f">Move-out date <input type="date" name="end_date" required value="${todayIST()}"></label>
-        <p class="note">No rent falls due from this date. Anything still owed stays on the pending list, and you can refund the ${inr(t.deposit)} deposit from Past tenants.</p>
+        <p class="note">The last day they stay. That month is charged for the days up to this date. Next you’ll settle the ${inr(t.deposit)} deposit: one month’s rent kept for maintenance, plus any rent still owed.</p>
         ${t.payments.length ? '' : '<p class="note">Added by mistake? <a href="#" data-delete-tenancy>Delete this tenant</a> instead.</p>'}
         <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Move out</button></div></form>`,
       async (v) => {
         await api(`/api/tenancies/${encodeURIComponent(t.id)}/end`, { method: 'POST', body: v });
         closeSheet();
         toast('Moved out');
-        reload();
+        await reload();
+        settleSheet(t.id, reload);
       }
     ).querySelector('[data-delete-tenancy]')?.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -664,6 +656,55 @@ function wireUnit(d) {
     const r = await api(`/api/links/${encodeURIComponent(el.dataset.refresh)}/refresh`, { method: 'POST', body: {} }).catch((e) => toast(e.message));
     if (r) toast(r.status === 'paid' ? 'Paid ✓' : 'Not paid yet');
     reload();
+  });
+}
+
+async function settleSheet(tenancyId, done) {
+  const sheet = openSheet('<h2>Settle deposit</h2><p class="note">Working it out…</p>');
+  let s;
+  try {
+    s = await api(`/api/tenancies/${encodeURIComponent(tenancyId)}/settlement`);
+  } catch (e) {
+    sheet.innerHTML = `<h2>Settle deposit</h2><div class="err">${esc(e.message)}</div><button class="btn block" data-close>Close</button>`;
+    return;
+  }
+  sheet.innerHTML = `<h2>Settle deposit</h2><form>
+    <div class="settle">
+      <div><span>Deposit</span><b>${inr(s.deposit)}</b></div>
+      <div><span>Kept for maintenance <small>(one month’s rent)</small></span><input name="maintenance" inputmode="numeric" value="${s.maintenance}"></div>
+      <div><span>Rent still owed${s.unpaidMonths.length ? `<small>${s.unpaidMonths.map((m) => `${esc(m.month)}${m.full ? '' : ` (${m.days} days)`}: ${inr(m.amount)}`).join(' · ')}</small>` : ''}</span><b>${inr(s.owed)}</b></div>
+      <label class="chk"><input type="checkbox" name="take_rent" ${s.owed ? 'checked' : 'disabled'}> Take the rent owed from the deposit</label>
+      <div class="total"><span>Refund to tenant</span><b data-refund-total></b></div>
+      <p class="note" data-still></p>
+    </div>
+    <label class="f">Date <input type="date" name="date" required max="${todayIST()}" value="${todayIST()}"></label>
+    <div class="actions"><button type="button" class="btn" data-close>Later</button><button class="btn primary" type="submit">Save settlement</button></div></form>`;
+  const form = sheet.querySelector('form');
+  const calc = () => {
+    const m = Math.max(0, Math.min(s.deposit, Number(String(form.maintenance.value).replace(/[,₹\s]/g, '')) || 0));
+    const take = form.take_rent.checked ? Math.min(s.owed, s.deposit - m) : 0;
+    form.querySelector('[data-refund-total]').textContent = inr(s.deposit - m - take);
+    const still = s.owed - take;
+    form.querySelector('[data-still]').textContent = still > 0 ? `${inr(still)} of rent is still owed after this. It stays on the pending list.` : '';
+  };
+  form.addEventListener('input', calc);
+  calc();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      const r = await api(`/api/tenancies/${encodeURIComponent(tenancyId)}/settle`, {
+        method: 'POST',
+        body: { maintenance: String(form.maintenance.value).replace(/[,₹\s]/g, '') || '0', take_rent: form.take_rent.checked, date: form.date.value },
+      });
+      closeSheet();
+      toast(`Settled · refund ${inr(r.refund)}`);
+      done();
+    } catch (err) {
+      form.insertAdjacentHTML('afterbegin', `<div class="err">${esc(err.message)}</div>`);
+      btn.disabled = false;
+    }
   });
 }
 

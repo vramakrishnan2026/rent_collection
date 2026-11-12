@@ -87,11 +87,10 @@ export async function syncOpenLinks(env: Env, db: D1Database) {
   return { checked: links.length, paid };
 }
 
-function describe(unit: string, periods: { due: string; status: string }[], nextDue: string | null) {
-  const unpaid = periods.filter((p) => p.status !== 'paid');
-  if (!unpaid.length) return `Rent ${unit} · ${nextDue ? monthLabel(nextDue) : 'advance'}`;
-  const first = monthLabel(unpaid[0].due);
-  const last = monthLabel(unpaid[unpaid.length - 1].due);
+function describe(unit: string, periods: { month: string; rent: number; paid: number; ended: boolean }[]) {
+  const unpaid = periods.filter((p) => p.ended && p.paid < p.rent);
+  const first = monthLabel(unpaid[0].month);
+  const last = monthLabel(unpaid[unpaid.length - 1].month);
   return unpaid.length === 1 ? `Rent ${unit} · ${first}` : `Rent ${unit} · ${first} to ${last} (${unpaid.length} months)`;
 }
 
@@ -124,9 +123,15 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
 
   const paidRow = await db.prepare('SELECT COALESCE(SUM(amount), 0) AS paid FROM payments WHERE tenancy_id = ?').bind(t.id).first<{ paid: number }>();
   const ledger = buildLedger(t, paidRow?.paid || 0, today);
-  const amount = ledger.outstanding > 0 ? ledger.outstanding : ledger.nextRent;
-  if (!amount || amount <= 0) throw new ValidationError('Nothing to collect for this tenant');
-  const description = describe(t.unit_code, ledger.periods, ledger.nextDueDate);
+  // Post-paid: ask for every month that has ended and isn't fully paid (this month is collected after it ends).
+  const amount = ledger.collectable;
+  if (amount <= 0) {
+    const running = ledger.periods.find((p) => !p.ended);
+    throw new ValidationError(
+      running ? `Nothing to collect yet. ${monthLabel(running.month)} rent can be collected once the month ends.` : 'Nothing to collect for this tenant'
+    );
+  }
+  const description = describe(t.unit_code, ledger.periods);
   const test = isTest(env);
 
   const stillOpen = (await db.prepare("SELECT * FROM payment_links WHERE tenancy_id = ? AND status = 'created' ORDER BY created_at DESC").bind(t.id).all<LinkRow>()).results;

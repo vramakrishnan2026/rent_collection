@@ -1,7 +1,7 @@
 // Run: npm test   (Node 22+, no packages needed)
 import assert from 'node:assert/strict';
 import { makeD1 } from './d1.mjs';
-import { addMonths, buildLedger, financialYear, rentForPeriod, todayIST } from '../worker/rent.ts';
+import { addMonths, buildLedger, financialYear, increaseDate, monthPeriods, rateOn } from '../worker/rent.ts';
 import { makeSession } from '../worker/auth.ts';
 import { signatureFor } from '../worker/razorpay.ts';
 import worker from '../worker/index.ts';
@@ -21,40 +21,50 @@ const test = async (name, fn) => {
 console.log('Rent rules');
 await test('due day keeps the move-in day, or the month end', () => {
   assert.equal(addMonths('2026-01-31', 1), '2026-02-28');
-  assert.equal(addMonths('2026-01-31', 2), '2026-03-31');
-  assert.equal(addMonths('2027-12-05', 2), '2028-02-05');
   assert.equal(addMonths('2028-01-30', 1), '2028-02-29');
 });
-await test('5% every 11 months, compounding, rounded to the rupee', () => {
-  assert.equal(rentForPeriod(10000, 0), 10000);
-  assert.equal(rentForPeriod(10000, 10), 10000);
-  assert.equal(rentForPeriod(10000, 11), 10500);
-  assert.equal(rentForPeriod(10000, 21), 10500);
-  assert.equal(rentForPeriod(10000, 22), 11025);
-  assert.equal(rentForPeriod(10000, 33), 11576);
+await test('5% from the 1st after 11 months, compounding, rounded to the rupee', () => {
+  assert.equal(increaseDate('2026-11-12', 1), '2027-11-01'); // 11 months end 11 Oct 2027 → from 1 Nov 2027
+  assert.equal(increaseDate('2026-11-01', 1), '2027-10-01');
+  assert.equal(rateOn(10000, '2026-11-12', '2027-10-31'), 10000);
+  assert.equal(rateOn(10000, '2026-11-12', '2027-11-01'), 10500);
+  assert.equal(increaseDate('2026-11-12', 2), '2028-10-01');
+  assert.equal(rateOn(10000, '2026-11-12', '2028-10-01'), 11025);
 });
-await test('payments clear the oldest month first; part-paid months stay pending', () => {
+await test('calendar months, post-paid; part months are rent ÷ 30 × days', () => {
+  const p = monthPeriods({ start_date: '2026-11-12', end_date: null, base_rent: 9000 }, '2027-02-20');
+  assert.deepEqual(p.map((x) => [x.month, x.days, x.rent, x.due]), [
+    ['2026-11', 19, 5700, '2026-12-10'],
+    ['2026-12', 31, 9000, '2027-01-10'],
+    ['2027-01', 31, 9000, '2027-02-10'],
+    ['2027-02', 28, 9000, '2027-03-10'],
+  ]);
+  const feb = monthPeriods({ start_date: '2027-02-15', end_date: null, base_rent: 9000 }, '2027-02-20');
+  assert.equal(feb[0].rent, 4200); // 14 days
+  const out = monthPeriods({ start_date: '2026-01-10', end_date: '2026-06-15', base_rent: 10000 }, '2026-11-12');
+  assert.deepEqual([out.length, out[5].days, out[5].rent], [6, 15, 5000]);
+});
+await test('a month is pending only after the 10th of the next month; oldest paid first', () => {
   const l = buildLedger({ start_date: '2026-01-10', end_date: null, base_rent: 10000 }, 95000, '2026-11-12');
-  assert.equal(l.periods.length, 11);
-  assert.equal(l.totalDue, 110000);
-  assert.equal(l.outstanding, 15000);
-  assert.equal(l.pendingMonths, 2);
+  assert.equal(l.periods.length, 11); // Jan–Nov
+  assert.equal(l.periods[0].rent, 7333); // 22 days of January
+  assert.equal(l.totalDue, 97333); // Jan–Oct (October was due by 10 Nov)
+  assert.equal(l.outstanding, 2333);
+  assert.equal(l.pendingMonths, 1);
   assert.equal(l.periods[9].status, 'partial');
-  assert.equal(l.periods[10].status, 'pending');
-  assert.equal(l.nextDueDate, '2026-12-10');
-  assert.equal(l.nextRent, 10500);
-  assert.equal(l.nextIncreaseOn, '2026-12-10');
+  assert.equal(l.periods[10].status, 'running'); // November
+  assert.deepEqual([l.nextDueDate, l.nextRent], ['2026-12-10', 10000]);
+  assert.deepEqual([l.nextIncreaseOn, l.nextIncreaseRent], ['2027-01-01', 10500]);
+  const early = buildLedger({ start_date: '2026-01-10', end_date: null, base_rent: 10000 }, 87333, '2026-11-08');
+  assert.equal(early.pendingMonths, 0, 'October is not late until after 10 Nov');
+  assert.equal(early.collectable, 10000, 'but October can already be collected');
 });
-await test('no rent after move-out; nothing due before move-in', () => {
-  assert.equal(buildLedger({ start_date: '2026-01-10', end_date: '2026-06-10', base_rent: 8000 }, 0, '2026-11-12').periods.length, 5);
-  const future = buildLedger({ start_date: '2026-12-01', end_date: null, base_rent: 8000 }, 0, '2026-11-12');
-  assert.equal(future.periods.length, 0);
-  assert.equal(future.nextDueDate, '2026-12-01');
-});
-await test('paying ahead shows as credit', () => {
-  const l = buildLedger({ start_date: '2026-10-01', end_date: null, base_rent: 8000 }, 24000, '2026-11-12');
-  assert.equal(l.outstanding, -8000);
-  assert.equal(l.pendingMonths, 0);
+await test('before move-in nothing is due; paying ahead shows as credit', () => {
+  const f = buildLedger({ start_date: '2026-12-01', end_date: null, base_rent: 8000 }, 0, '2026-11-12');
+  assert.deepEqual([f.totalDue, f.nextDueDate, f.nextRent], [0, '2027-01-10', 8000]);
+  const a = buildLedger({ start_date: '2026-10-01', end_date: null, base_rent: 8000 }, 24000, '2026-11-12');
+  assert.equal(a.outstanding, -16000);
+  assert.equal(a.pendingMonths, 0);
 });
 await test('financial year runs April to March', () => {
   assert.deepEqual(financialYear('2026-11-12'), ['2026-04-01', '2027-03-31']);
@@ -73,6 +83,7 @@ const env = {
   RAZORPAY_KEY_ID: 'rzp_test_abc',
   RAZORPAY_KEY_SECRET: 'sek',
   RAZORPAY_WEBHOOK_SECRET: 'whsec',
+  TEST_TODAY: '2026-11-12',
 };
 const owner = `cr_session=${await makeSession(env, 'owner@gmail.com')}`;
 const guard = `cr_session=${await makeSession(env, 'guard@gmail.com')}`;
@@ -91,8 +102,8 @@ const call = async (path, { cookie = owner, method = 'GET', body, headers = {} }
   return { status: res.status, body: type.includes('json') ? await res.json() : await res.text(), res };
 };
 
-const today = todayIST();
-const start = addMonths(today, -3); // 4 months have fallen due by today
+const today = '2026-11-12';
+const start = '2026-08-12'; // Aug (20 days), Sep and Oct are due by today; November is still running
 
 await test('signed-out visitors are sent to sign-in; API says 401', async () => {
   assert.equal((await call('/', { cookie: '' })).status, 302);
@@ -122,24 +133,27 @@ await test('unit page shows rent, months and people', async () => {
   assert.equal(body.current.whatsapp, '9845012345');
   assert.equal(body.current.phone, null);
   assert.equal(body.current.periods.length, 4);
-  assert.equal(body.current.pendingMonths, 4);
-  assert.equal(body.current.outstanding, 48000);
+  assert.deepEqual(body.current.periods.map((p) => [p.month, p.rent, p.status]), [
+    ['2026-11', 12000, 'running'], ['2026-10', 12000, 'pending'], ['2026-09', 12000, 'pending'], ['2026-08', 8000, 'pending'],
+  ]);
+  assert.equal(body.current.pendingMonths, 3);
+  assert.equal(body.current.outstanding, 32000);
   assert.equal(body.current.people.length, 2);
 });
 await test('a part payment clears the oldest month first', async () => {
   const r = await call('/api/payments', { method: 'POST', body: { tenancy_id: tid, amount: 30000, paid_on: today, method: 'upi', reference: 'UTR123' } });
   assert.equal(r.status, 201);
   const { body } = await call('/api/units/G1');
-  assert.equal(body.current.outstanding, 18000);
-  assert.equal(body.current.pendingMonths, 2);
+  assert.equal(body.current.outstanding, 2000);
+  assert.equal(body.current.pendingMonths, 1);
   const future = await call('/api/payments', { method: 'POST', body: { tenancy_id: tid, amount: 1, paid_on: addMonths(today, 1), method: 'cash' } });
   assert.equal(future.status, 400);
 });
 await test('security guard sees months pending, never amounts, and nothing else', async () => {
   const { body } = await call('/api/security', { cookie: guard });
   const g1 = body.units.find((u) => u.code === 'G1');
-  assert.deepEqual({ status: g1.status, months: g1.months, action: g1.action }, { status: 'pending', months: 2, action: 'Remind tenant' });
-  assert.ok(!JSON.stringify(body).includes('18000'));
+  assert.deepEqual({ status: g1.status, months: g1.months, action: g1.action }, { status: 'pending', months: 1, action: 'Remind tenant' });
+  assert.ok(!JSON.stringify(body).includes('2000'));
   assert.equal((await call('/api/dashboard', { cookie: guard })).status, 403);
   assert.equal((await call('/api/units', { cookie: guard })).status, 403);
   assert.equal((await call('/api/payments', { cookie: guard, method: 'POST', body: {} })).status, 403);
@@ -162,13 +176,13 @@ await test('dashboard: collected this month and year, pending, deposits', async 
   const { body } = await call('/api/dashboard');
   assert.equal(body.collected.mtd, 30000);
   assert.equal(body.collected.ytd, 30000);
-  assert.equal(body.pendingTotal, 18000);
+  assert.equal(body.pendingTotal, 2000);
   assert.equal(body.pendingUnits, 1);
   assert.equal(body.depositsHeld, 50000);
   assert.equal(body.rentableUnits, 24);
   assert.equal(body.occupied, 1);
   assert.equal(body.pending[0].unit, 'G1');
-  assert.equal(body.pending[0].months, 2);
+  assert.equal(body.pending[0].months, 1);
 });
 
 // --- Razorpay, with its API faked
@@ -189,13 +203,14 @@ await test('rent link for what is owed, ready for WhatsApp and SMS', async () =>
   const { status, body } = await call(`/api/tenancies/${tid}/link`, { method: 'POST', body: {} });
   assert.equal(status, 200, JSON.stringify(body));
   link = body.link;
-  assert.equal(body.amount, 18000);
+  assert.equal(body.amount, 2000);
+  assert.equal(body.description, 'Rent G1 · Oct 2026');
   const create = rzCalls.find((c) => c.method === 'POST');
-  assert.equal(create.body.amount, 1800000);
+  assert.equal(create.body.amount, 200000);
   assert.equal(create.body.customer.contact, '+919845012345');
   assert.deepEqual(create.body.notify, { sms: false, email: false });
   assert.ok(body.whatsappUrl.startsWith('https://wa.me/919845012345?text='));
-  assert.ok(decodeURIComponent(body.whatsappUrl).includes('₹18,000'));
+  assert.ok(decodeURIComponent(body.whatsappUrl).includes('₹2,000'));
   assert.ok(body.smsUrl.startsWith('sms:+919845012345?body='));
   assert.equal(body.test, true);
   const again = await call(`/api/tenancies/${tid}/link`, { method: 'POST', body: {} });
@@ -218,7 +233,7 @@ const paidEvent = () => ({
   event: 'payment_link.paid',
   payload: {
     payment_link: { entity: { id: link.id, status: 'paid' } },
-    payment: { entity: { id: 'pay_TEST1', amount: 1800000, status: 'captured', created_at: Math.floor(Date.now() / 1000) } },
+    payment: { entity: { id: 'pay_TEST1', amount: 200000, status: 'captured', created_at: Math.floor(Date.parse('2026-11-12T06:00:00Z') / 1000) } },
   },
 });
 await test('webhook: unsigned calls are refused', async () => {
@@ -237,15 +252,22 @@ await test('webhook: a paid link records the payment once', async () => {
 await test('test payments can be cleared before going live', async () => {
   const r = await call('/api/payments/test', { method: 'DELETE' });
   assert.equal(r.body.deleted, 1);
-  assert.equal((await call('/api/units/G1')).body.current.outstanding, 18000);
+  assert.equal((await call('/api/units/G1')).body.current.outstanding, 2000);
 });
-await test('move-out and deposit refund', async () => {
+await test('move-out: last part month, one month kept for maintenance, rest refunded', async () => {
   assert.equal((await call(`/api/tenancies/${tid}/end`, { method: 'POST', body: { end_date: today } })).status, 200);
-  assert.equal((await call(`/api/tenancies/${tid}/refund`, { method: 'POST', body: { amount: 60000, date: today } })).status, 400);
-  assert.equal((await call(`/api/tenancies/${tid}/refund`, { method: 'POST', body: { amount: 32000, date: today } })).status, 200);
-  const { body } = await call('/api/dashboard');
-  assert.equal(body.depositsHeld, 0);
-  assert.equal(body.pending[0].former, true, 'a former tenant who still owes stays on the pending list');
+  // Owes October's 2,000 + 1–12 November (12 days = 4,800)
+  let d = (await call('/api/dashboard')).body;
+  assert.deepEqual([d.pending[0].unit, d.pending[0].former, d.pending[0].amount], ['G1', true, 6800]);
+  const pre = (await call(`/api/tenancies/${tid}/settlement`)).body;
+  assert.deepEqual([pre.deposit, pre.maintenance, pre.owed, pre.fromDeposit, pre.refund], [50000, 12000, 6800, 6800, 31200]);
+  assert.equal((await call(`/api/tenancies/${tid}/settle`, { method: 'POST', body: { maintenance: 60000, date: today } })).status, 400);
+  const r = await call(`/api/tenancies/${tid}/settle`, { method: 'POST', body: { maintenance: 12000, date: today } });
+  assert.deepEqual([r.body.fromDeposit, r.body.refund], [6800, 31200]);
+  d = (await call('/api/dashboard')).body;
+  assert.equal(d.depositsHeld, 0);
+  assert.equal(d.pending.length, 0, 'the rent was taken from the deposit');
+  assert.equal((await call(`/api/tenancies/${tid}/settle`, { method: 'POST', body: { maintenance: 0, date: today } })).status, 400);
   const units = await call('/api/units');
   assert.equal(units.body.units.find((u) => u.code === 'G1').status, 'vacant');
 });

@@ -17,7 +17,8 @@ import {
   listPayments,
   overview,
   recordPayment,
-  refundDeposit,
+  settleDeposit,
+  settlementPreview,
   securityView,
   unitDetail,
   updatePerson,
@@ -65,7 +66,7 @@ function drivePage(ok: boolean, message: string) {
 async function handleApi(request: Request, env: Env, url: URL, user: User): Promise<Response> {
   const { pathname } = url;
   const method = request.method;
-  const today = todayIST();
+  const today = env.TEST_TODAY || todayIST();
   if (method !== 'GET' && !sameOrigin(request, url)) return error('Not allowed', 403);
 
   if (pathname === '/api/me' && method === 'GET') return json({ email: user.email, role: user.role, name: user.name ?? null, device: Boolean(user.device) });
@@ -159,13 +160,14 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
       await updateTenancy(env.DB, id, await readJson(request));
       return json({ success: true });
     }
+    if (seg.length === 3 && action === 'settlement' && method === 'GET') return json(await settlementPreview(env.DB, id, today));
     if (seg.length === 2 && method === 'DELETE') {
       await deleteTenancy(env.DB, id);
       return json({ success: true });
     }
     if (seg.length === 3 && method === 'POST') {
       if (action === 'end') await endTenancy(env.DB, id, await readJson(request));
-      else if (action === 'refund') await refundDeposit(env.DB, id, await readJson(request));
+      else if (action === 'settle') return json({ success: true, ...(await settleDeposit(env.DB, id, await readJson(request), user.email, today)) });
       else if (action === 'people') return json({ success: true, id: await addPerson(env.DB, id, await readJson(request)) }, 201);
       else if (action === 'link') return json(await linkForTenancy(env, env.DB, id, today));
       else return error('Not found', 404);

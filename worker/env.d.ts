@@ -54,6 +54,9 @@ export interface Env {
   RAZORPAY_KEY_SECRET?: string;
   RAZORPAY_WEBHOOK_SECRET?: string;
 
+  // Tests only: pretend today is this date (YYYY-MM-DD)
+  TEST_TODAY?: string;
+
   // Optional: key for signing session cookies (defaults to one derived from GOOGLE_CLIENT_SECRET)
   SESSION_SECRET?: string;
 }

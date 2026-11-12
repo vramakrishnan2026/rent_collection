@@ -7,10 +7,16 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 - **Units:** you can add more at any time (Units › ＋). Any unit can be marked **rent-free**, such as Anita's.
 - **Tenants:** each unit records the move-in date, monthly rent, refundable deposit, WhatsApp/SMS number, and everyone living there. Each person's ID photo is saved to Google Drive. ID numbers are never stored.
 - **Rent rules:**
-  - Rent is due on the move-in day every month. If that day doesn't exist in a month (e.g. the 31st), it's due on the last day of that month.
-  - Rent goes up **5% every 11 months**, compounding and rounded to the rupee. For ₹10,000: months 1–11 are ₹10,000, months 12–22 are ₹10,500, months 23–33 are ₹11,025.
-  - Part payments are allowed. They clear the oldest month first, and a part-paid month still counts as pending.
-- **Rent links:** tap **Send link** to create a Razorpay Payment Link for everything the tenant owes. If nothing is owed, the link is for next month's rent. Then tap **WhatsApp** or **SMS** to send it from your phone, with the message ready. When the tenant pays, Razorpay's webhook records the payment. A 9 AM daily check catches anything the webhook missed.
+  - Rent is **post-paid** and charged by **calendar month** (the 1st to the month's last day).
+  - A part month (the move-in and move-out months) is charged as **monthly rent ÷ 30 × days stayed**. For example, moving in on 12 Nov at ₹9,000 means November is 19 days, ₹5,700.
+  - Each month's rent is **due by the 10th of the next month**. After that it shows as pending, in red for Anita.
+  - Rent goes up **5% from the 1st after every 11 months**, compounding and rounded to the rupee. For example, moving in on 12 Nov 2026 means the new rent starts on 1 Nov 2027.
+  - Part payments are allowed and clear the oldest month first.
+- **Moving out:** record the last day stayed, then settle the deposit.
+  - **One month's rent is kept for maintenance** (you can change the amount), and any rent still owed is taken from the rest. The app records that as a payment.
+  - The refund is what's left.
+  - Anything the deposit doesn't cover stays on the pending list.
+- **Rent links:** tap **Send link** to create a Razorpay Payment Link for every month that has ended and isn't paid (from the 1st, last month's rent can be collected). Then tap **WhatsApp** or **SMS** to send it from your phone, with the message ready. When the tenant pays, Razorpay's webhook records the payment. A 9 AM daily check catches anything the webhook missed.
 - **Dashboard:**
   - Collected this month (MTD) and this financial year (YTD, April to March)
   - Pending amount and how many tenants owe
@@ -30,7 +36,6 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - On Android, she opens the link in Chrome, then ⋮ › Add to Home screen.
   - On iPhone, she adds the app to the Home Screen *first*, opens it, taps "Anita? Enter your code" and types the code. iPhones keep a separate sign-in for Home Screen apps.
   - If Anita uses a Gmail account, it can go in `SECURITY_EMAILS` instead. Each unit shows **Paid**, or **Pending** in red with the number of months and "Remind tenant". He never sees amounts.
-- **Moving out:** record the move-out date (no rent falls due after it), then the deposit refund. A tenant who moved out still owing stays on the pending list.
 
 ## Setup (one time)
 

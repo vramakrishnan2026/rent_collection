@@ -284,3 +284,9 @@ details.guide h3 { font-size: .95rem; margin-top: 1rem; margin-bottom: .2rem; }
 .gsteps:not(.plain) .gi::after { content: counter(g); position: absolute; top: -.35rem; left: -.35rem; width: 1.05rem; height: 1.05rem; border-radius: 99rem; background: var(--blue); color: #fff; font-size: .62rem; font-weight: 800; display: grid; place-items: center; }
 details.guide > a.btn.block { width: calc(100% - 2.2rem); }
 .d.addr { white-space: normal; margin-top: .15rem; }
+.settle { display: flex; flex-direction: column; gap: .55rem; background: var(--soft); border-radius: .9rem; padding: .9rem 1rem; margin-bottom: .9rem; }
+.settle > div { display: flex; justify-content: space-between; align-items: center; gap: .8rem; }
+.settle span small { display: block; color: var(--muted); font-size: .75rem; }
+.settle input[name=maintenance] { width: 7.5rem; text-align: right; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .6rem; background: var(--card); font-weight: 700; }
+.settle .total { border-top: 1px solid var(--line); padding-top: .55rem; font-size: 1.05rem; }
+.settle .chk { font-size: .85rem; display: flex; gap: .5rem; align-items: center; }
