@@ -270,3 +270,16 @@ img.thumb { width: 2.8rem; height: 2.8rem; object-fit: cover; border-radius: .6r
 .banner a { color: inherit; }
 @media (min-width: 1024px) { .seg { max-width: 30rem; } .review, .big-btn, [data-gallery] { max-width: 34rem; } }
 .paircode { text-align: center; font-size: 2.6rem; font-weight: 900; letter-spacing: .3rem; padding: .9rem; background: var(--soft); border-radius: 1rem; font-variant-numeric: tabular-nums; }
+details.guide { padding: 0; overflow: hidden; border-color: var(--blue); }
+details.guide summary { list-style: none; cursor: pointer; padding: 1rem 1.1rem; font-weight: 800; font-size: 1.02rem; background: var(--blue-bg); color: var(--blue); display: flex; justify-content: space-between; }
+details.guide summary::-webkit-details-marker { display: none; }
+details.guide summary::after { content: '▾'; transition: transform .2s; }
+details.guide[open] summary::after { transform: rotate(180deg); }
+details.guide > :not(summary) { margin-left: 1.1rem; margin-right: 1.1rem; }
+details.guide > a.btn { margin-bottom: 1.1rem; }
+details.guide h3 { font-size: .95rem; margin-top: 1rem; margin-bottom: .2rem; }
+.gsteps { counter-reset: g; list-style: none; padding: 0; margin: .9rem 0 .4rem; display: flex; flex-direction: column; gap: .7rem; }
+.gsteps li { display: flex; gap: .7rem; align-items: flex-start; line-height: 1.45; font-size: .95rem; counter-increment: g; }
+.gsteps .gi { flex: none; width: 2.2rem; height: 2.2rem; border-radius: .7rem; background: var(--soft); display: grid; place-items: center; font-size: 1.1rem; position: relative; }
+.gsteps:not(.plain) .gi::after { content: counter(g); position: absolute; top: -.35rem; left: -.35rem; width: 1.05rem; height: 1.05rem; border-radius: 99rem; background: var(--blue); color: #fff; font-size: .62rem; font-weight: 800; display: grid; place-items: center; }
+details.guide > a.btn.block { width: calc(100% - 2.2rem); }

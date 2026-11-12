@@ -809,6 +809,22 @@ const GT = {
     retake: 'Retake', submit: 'Submit', lockNote: 'After you submit, the ID can’t be changed or deleted.',
     submitted: 'Submitted', uploading: 'Submitting…', saved: 'Saved', nameRead: 'Name', noName: 'Name not read. That’s OK, it’s saved.',
     failed: 'Failed. Tap to try again', driveMissing: 'Google Drive isn’t linked yet. Please tell the owner.', none: 'Nothing submitted yet.',
+    guideTitle: 'How to add a tenant’s ID', guideStart: 'Add an ID now',
+    guide: [
+      ['📷', 'Tap the <b>Add ID</b> tab at the top.'],
+      ['🏠', 'Choose the tenant’s unit, for example <b>G3</b>. The tenant’s name is shown under it.'],
+      ['📸', 'Tap <b>Take photo</b>. Lay the ID flat, fill the screen with it, and avoid glare. Take the <b>front and the back</b> as two photos. For a PDF, tap <b>Choose photo or PDF</b>.'],
+      ['👀', 'Check the photo. If it is blurred or the name can’t be read, tap <b>Retake</b>.'],
+      ['✅', 'If it is clear, tap <b>Submit</b>.'],
+    ],
+    afterTitle: 'After you tap Submit',
+    after: [
+      ['☁️', 'The photo goes straight to the owner’s Google Drive. It is not kept on your phone.'],
+      ['📝', 'The app reads the name on the ID and shows it under <b>Submitted</b>. If the name isn’t read, that’s OK. The photo is still saved.'],
+      ['🔒', 'After you submit, the photo <b>can’t be changed, deleted or seen again</b>. If you sent a wrong photo, just tell the owner.'],
+      ['👤', 'The owner checks it and attaches it to the right tenant.'],
+      ['⚠️', 'If it says <b>Failed</b>, check the internet and tap it to try again.'],
+    ],
   },
   ne: {
     status: 'भाडाको स्थिति', addId: 'परिचयपत्र थप्नुहोस्',
@@ -822,13 +838,29 @@ const GT = {
     retake: 'फेरि खिच्नुहोस्', submit: 'पठाउनुहोस्', lockNote: 'पठाएपछि परिचयपत्र बदल्न वा मेटाउन सकिँदैन।',
     submitted: 'पठाइएका', uploading: 'पठाउँदै…', saved: 'सुरक्षित भयो', nameRead: 'नाम', noName: 'नाम पढ्न सकिएन। ठीक छ, फोटो सुरक्षित भयो।',
     failed: 'असफल भयो। फेरि प्रयास गर्न थिच्नुहोस्', driveMissing: 'Google Drive अझै जोडिएको छैन। कृपया मालिकलाई भन्नुहोस्।', none: 'अहिलेसम्म केही पठाइएको छैन।',
+    guideTitle: 'भाडावालको परिचयपत्र कसरी थप्ने', guideStart: 'अहिले परिचयपत्र थप्नुहोस्',
+    guide: [
+      ['📷', 'माथिको <b>परिचयपत्र थप्नुहोस्</b> ट्याब थिच्नुहोस्।'],
+      ['🏠', 'भाडावालको कोठा छान्नुहोस्, जस्तै <b>G3</b>। कोठामुनि भाडावालको नाम देखिन्छ।'],
+      ['📸', '<b>फोटो खिच्नुहोस्</b> थिच्नुहोस्। परिचयपत्रलाई समतल राख्नुहोस्, पूरै स्क्रिनमा देखाउनुहोस्, चमक नपरोस्। <b>अगाडि र पछाडि</b> दुवैको छुट्टाछुट्टै फोटो खिच्नुहोस्। PDF भए <b>फोटो वा PDF छान्नुहोस्</b> थिच्नुहोस्।'],
+      ['👀', 'फोटो जाँच गर्नुहोस्। धमिलो छ वा नाम पढ्न सकिँदैन भने <b>फेरि खिच्नुहोस्</b> थिच्नुहोस्।'],
+      ['✅', 'स्पष्ट छ भने <b>पठाउनुहोस्</b> थिच्नुहोस्।'],
+    ],
+    afterTitle: 'पठाउनुहोस् थिचेपछि के हुन्छ',
+    after: [
+      ['☁️', 'फोटो सिधै मालिकको Google Drive मा जान्छ। तपाईंको फोनमा राखिँदैन।'],
+      ['📝', 'एपले परिचयपत्रको नाम पढेर <b>पठाइएका</b> सूचीमा देखाउँछ। नाम पढ्न नसके पनि ठीक छ, फोटो सुरक्षित हुन्छ।'],
+      ['🔒', 'पठाएपछि फोटो <b>बदल्न, मेटाउन वा फेरि हेर्न सकिँदैन</b>। गलत फोटो पठाउनुभयो भने मालिकलाई भन्नुहोस्।'],
+      ['👤', 'मालिकले जाँचेर सही भाडावालसँग जोड्नुहुन्छ।'],
+      ['⚠️', '<b>असफल भयो</b> देखिए इन्टरनेट जाँच गरेर त्यसलाई थिच्नुहोस्, फेरि पठाइन्छ।'],
+    ],
   },
 };
 const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
 };
-let lang = store.get('cr-lang') === 'ne' ? 'ne' : 'en';
+let lang = store.get('cr-lang') || null; // set after /api/me: Nepali by default for Anita, English for the owner
 const gt = () => GT[lang];
 
 function guardHeader(active) {
@@ -849,6 +881,18 @@ function wireLang(again) {
   );
 }
 
+function guideHtml() {
+  const T = gt();
+  const open = store.get('cr-guide') !== 'closed';
+  const steps = (list, numbered) =>
+    `<ol class="gsteps${numbered ? '' : ' plain'}">${list.map(([icon, text]) => `<li><span class="gi">${icon}</span><span>${text}</span></li>`).join('')}</ol>`;
+  return `<details class="card guide" ${open ? 'open' : ''}><summary>📘 ${T.guideTitle}</summary>
+    ${steps(T.guide, true)}
+    <h3>${T.afterTitle}</h3>
+    ${steps(T.after, false)}
+    <a class="btn green block" href="#/ids">📷 ${T.guideStart}</a></details>`;
+}
+
 async function viewSecurity() {
   const d = await api('/api/security');
   const T = gt();
@@ -860,7 +904,7 @@ async function viewSecurity() {
   shell(
     T.status,
     `Challaghatta Home · ${fmtDate(d.today)}`,
-    `${top}${pending.length
+    `${top}${guideHtml()}${pending.length
       ? `<div class="sec-head red"><div class="big">${pending.length}</div><div class="txt">${T.pendingHead(pending.length)}</div></div>`
       : `<div class="sec-head green"><div class="big">✓</div><div class="txt">${T.allPaid}</div></div>`}
     <div class="sec-pend">${pending
@@ -883,6 +927,7 @@ async function viewSecurity() {
     'security'
   );
   wireLang(viewSecurity);
+  $app.querySelector('details.guide')?.addEventListener('toggle', (e) => store.set('cr-guide', e.target.open ? 'open' : 'closed'));
   $app.querySelector('[data-reload]').addEventListener('click', () => viewSecurity().then(() => toast(gt().updated)));
 }
 
@@ -1055,6 +1100,8 @@ window.addEventListener('hashchange', render);
     $app.innerHTML = `<main class="wrap"><div class="err" style="margin-top:2rem">${esc(e.message)}</div></main>`;
     return;
   }
+  if (!lang) lang = me.role === 'owner' ? 'en' : 'ne';
+  document.documentElement.lang = me.role === 'owner' ? 'en' : lang;
   await render();
   // Keep the guard's screen fresh if it stays open.
   if (me.role !== 'owner') setInterval(() => !$sheet.innerHTML && viewSecurity(), 5 * 60 * 1000);
