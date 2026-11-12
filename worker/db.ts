@@ -230,7 +230,23 @@ export async function dashboard(db: D1Database, today: string) {
   ].sort((a, b) => b.months - a.months || b.amount - a.amount);
 
   const rentable = units.filter((u) => !u.rent_free);
+  const weekAhead = new Date(Date.parse(today + 'T00:00:00Z') + 7 * 86400_000).toISOString().slice(0, 10);
+  const upcoming = units
+    .filter((u) => u.tenancy && !u.rent_free && u.tenancy.nextDueDate && u.tenancy.nextDueDate <= weekAhead)
+    .map((u) => ({ unit: u.code, name: u.tenancy!.contact_name, date: u.tenancy!.nextDueDate!, amount: u.tenancy!.nextRent || 0, tenancyId: u.tenancy!.id }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const recent = (
+    await db
+      .prepare(
+        `SELECT p.amount, p.paid_on, p.method, p.test, t.unit_code, t.contact_name FROM payments p JOIN tenancies t ON t.id = p.tenancy_id
+         ORDER BY p.paid_on DESC, p.created_at DESC LIMIT 8`
+      )
+      .all()
+  ).results;
   return {
+    upcoming,
+    recent,
+    unitMap: units.map((u) => ({ code: u.code, floor: u.floor, status: u.status, months: u.tenancy?.pendingMonths || 0, name: u.tenancy?.contact_name || null })),
     today,
     financialYear: { start: fyStart, end: fyEnd },
     collected: { mtd, ytd, testTotal },

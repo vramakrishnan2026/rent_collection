@@ -90,19 +90,59 @@ document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSheet());
 let me = null;
 
 function shell(title, sub, body, tab) {
-  const tabs = me.role === 'owner'
+  const owner = me.role === 'owner';
+  const items = [
+    ['home', '⌂', 'Home', 'Dashboard'],
+    ['units', '▦', 'Units', 'Units'],
+    ['payments', '₹', 'Payments', 'Payments'],
+    ['menu', '☰', 'More', 'Settings'],
+  ];
+  const nav = owner
     ? `<nav class="tabs">
-        <a href="#/home" class="${tab === 'home' ? 'on' : ''}"><span>⌂</span>Home</a>
-        <a href="#/units" class="${tab === 'units' ? 'on' : ''}"><span>▦</span>Units</a>
-        <a href="#/payments" class="${tab === 'payments' ? 'on' : ''}"><span>₹</span>Payments</a>
-        <a href="#/menu" class="${tab === 'menu' ? 'on' : ''}"><span>☰</span>More</a>
+        <div class="brand"><span class="logo">⌂</span><div><b>Challaghatta Home</b><small>Rent collection</small></div></div>
+        ${items.map(([k, i, s, l]) => `<a href="#/${k}" class="${tab === k ? 'on' : ''}"><span class="i">${i}</span><span class="s">${s}</span><span class="l">${l}</span></a>`).join('')}
+        <a href="#/security" class="lg-only ${tab === 'security' ? 'on' : ''}"><span class="i">◉</span><span class="l">Security view</span></a>
+        <div class="who"><span>${esc(me.name || me.email)}</span><a href="/auth/logout">Sign out</a></div>
       </nav>`
     : '';
-  $app.innerHTML = `<header class="top"><h1>${title}${sub ? `<span class="sub">${sub}</span>` : ''}</h1>${headerExtra}</header>
-    <main class="wrap">${body}</main>${tabs}`;
+  $app.innerHTML = `<div class="layout${owner ? ' has-nav' : ''}">${nav}<div class="content">
+    <header class="top"><h1>${title}${sub ? `<span class="sub">${sub}</span>` : ''}</h1>${headerExtra}</header>
+    <main class="wrap">${body}</main></div></div>`;
   headerExtra = '';
 }
 let headerExtra = '';
+
+/** ₹1.2L / ₹45K style, for chart labels. */
+const compact = (n) => {
+  n = Math.round(Number(n) || 0);
+  if (n >= 1e7) return '₹' + +(n / 1e7).toFixed(1) + 'Cr';
+  if (n >= 1e5) return '₹' + +(n / 1e5).toFixed(1) + 'L';
+  if (n >= 1e3) return '₹' + +(n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'K';
+  return '₹' + n;
+};
+
+const byFloor = (units) => {
+  const floors = [];
+  for (const u of units) {
+    let f = floors.find((x) => x.name === u.floor);
+    if (!f) floors.push((f = { name: u.floor, units: [] }));
+    f.units.push(u);
+  }
+  return floors;
+};
+
+function unitMapHtml(units) {
+  return `<div class="umap">${byFloor(units)
+    .map(
+      (f) => `<div class="urow"><span class="fl" title="${esc(f.name)} floor">${esc(f.name.slice(0, 1))}</span>${f.units
+        .map(
+          (u) => `<a href="#/unit/${esc(u.code)}" class="ucell ${u.status}" title="${esc(u.code)} · ${esc(u.name || STATUS[u.status])}${u.status === 'pending' ? ` · ${plural(u.months, 'month')} due` : ''}">${esc(u.code)}${u.status === 'pending' ? `<i>${u.months}</i>` : ''}</a>`
+        )
+        .join('')}</div>`
+    )
+    .join('')}</div>
+    <div class="legend"><span><i class="lg paid"></i>Paid</span><span><i class="lg pending"></i>Pending</span><span><i class="lg vacant"></i>Vacant</span><span><i class="lg free"></i>Rent-free</span></div>`;
+}
 
 // ---------- owner: dashboard ----------
 
@@ -110,13 +150,21 @@ async function viewHome() {
   const [d, s] = await Promise.all([api('/api/dashboard'), api('/api/settings')]);
   const fyLabel = `FY ${d.financialYear.start.slice(0, 4)}–${d.financialYear.end.slice(2, 4)}`;
   const max = Math.max(1, ...d.months.map((m) => Math.max(m.due, m.collected)));
-  const chart = d.months
-    .map(
-      (m) => `<div class="col" title="${esc(monthOf(m.month))}: collected ${inr(m.collected)} of ${inr(m.due)} due">
-        <div class="bars"><div class="due" style="height:${(m.due / max) * 100}%"></div><div class="got" style="height:${(m.collected / max) * 100}%"></div></div>
+  const fyDue = d.months.reduce((a, m) => a + m.due, 0);
+  const rate = d.dueThisMonth ? Math.min(100, Math.round((d.collected.mtd / d.dueThisMonth) * 100)) : null;
+  const fyRate = fyDue ? Math.min(100, Math.round((d.collected.ytd / fyDue) * 100)) : null;
+
+  const chart = `<div class="chart2">
+    <div class="yaxis"><span>${compact(max)}</span><span>${compact(max / 2)}</span><span>₹0</span></div>
+    <div class="plot"><div class="gl" style="bottom:100%"></div><div class="gl" style="bottom:50%"></div><div class="gl" style="bottom:0"></div>
+    ${d.months
+      .map(
+        (m) => `<div class="col" title="${esc(monthOf(m.month))}: collected ${inr(m.collected)} of ${inr(m.due)} due">
+        <div class="bars"><div class="due" style="height:${(m.due / max) * 100}%"></div><div class="got" style="height:${(m.collected / max) * 100}%">${m.collected ? `<b>${compact(m.collected)}</b>` : ''}</div></div>
         <div class="m">${MONTHS[Number(m.month.slice(5)) - 1]}</div></div>`
-    )
-    .join('');
+      )
+      .join('')}</div></div>`;
+
   const pending = d.pending.length
     ? d.pending
         .map(
@@ -124,35 +172,63 @@ async function viewHome() {
           <a class="code red" href="#/unit/${esc(p.unit)}">${esc(p.unit)}</a>
           <div class="main"><div class="t">${esc(p.name)}${p.former ? ' <span class="chip vacant">moved out</span>' : ''}</div>
             <div class="d">${plural(p.months, 'month')} pending${p.lastSentAt ? ` · link sent ${ago(p.lastSentAt)}` : ''}</div></div>
-          <div><div class="amt" style="color:var(--red)">${inr(p.amount)}</div>
-            ${p.former ? '' : `<button class="btn small" data-send="${esc(p.tenancyId)}" style="margin-top:.3rem">Send link</button>`}</div>
+          <div class="amt" style="color:var(--red)">${inr(p.amount)}</div>
+          ${p.former ? '' : `<button class="btn small" data-send="${esc(p.tenancyId)}">Send link</button>`}
         </div>`
         )
         .join('')
-    : `<p class="note">Nobody owes rent right now.</p>`;
+    : `<div class="empty">✓<span>Nobody owes rent right now.</span></div>`;
+
+  const upcoming = d.upcoming.length
+    ? d.upcoming
+        .map(
+          (u) => `<div class="row"><span class="datechip"><b>${Number(u.date.slice(8))}</b>${MONTHS[Number(u.date.slice(5, 7)) - 1]}</span>
+          <div class="main"><div class="t"><a href="#/unit/${esc(u.unit)}">${esc(u.unit)}</a> · ${esc(u.name)}</div><div class="d">${u.date === d.today ? 'Due today' : `Due ${fmtDate(u.date)}`}</div></div>
+          <div class="amt">${inr(u.amount)}</div></div>`
+        )
+        .join('')
+    : `<div class="empty"><span>No rent falls due in the next 7 days.</span></div>`;
+
+  const recent = d.recent.length
+    ? d.recent
+        .map(
+          (p) => `<div class="row"><a class="code green" href="#/unit/${esc(p.unit_code)}">${esc(p.unit_code)}</a>
+          <div class="main"><div class="t">${esc(p.contact_name)} ${p.test ? '<span class="chip test">test</span>' : ''}</div><div class="d">${fmtDate(p.paid_on)} · ${METHOD[p.method] || esc(p.method)}</div></div>
+          <div class="amt" style="color:var(--green)">${inr(p.amount)}</div></div>`
+        )
+        .join('')
+    : `<div class="empty"><span>No payments recorded yet.</span></div>`;
 
   const banners = [];
   if (!s.razorpay.configured) banners.push('Razorpay isn’t connected yet, so rent links are off. You can still record payments by hand.');
-  else if (s.razorpay.mode === 'test') banners.push('Razorpay is in <b>test mode</b>: links take test payments only.' + (d.collected.testTotal ? ` ${inr(d.collected.testTotal)} of test payments are counted below (clear them in ☰ More).` : ''));
+  else if (s.razorpay.mode === 'test') banners.push('Razorpay is in <b>test mode</b>: links take test payments only.' + (d.collected.testTotal ? ` ${inr(d.collected.testTotal)} of test payments are counted (clear them in Settings).` : ''));
+  const noTenants = d.occupied === 0 && !d.pending.length;
 
+  headerExtra = `<a class="btn small" href="#/security">◉ Security view</a>`;
   shell(
-    'Challaghatta Home',
-    `Rent · ${fmtDate(d.today)}`,
+    'Dashboard',
+    `Challaghatta Home · ${fmtDate(d.today)}`,
     `${banners.map((b) => `<div class="banner">${b}</div>`).join('')}
+    ${noTenants ? `<div class="hero"><div><b>Add your first tenant</b><span>Open a unit, add who lives there, their rent and deposit. The dashboard fills in from there.</span></div><a class="btn primary" href="#/units">Go to units</a></div>` : ''}
     <div class="kpis">
-      <div class="kpi green"><div class="l">Collected this month</div><div class="v">${inr(d.collected.mtd)}</div><div class="s">${inr(d.dueThisMonth)} fell due this month</div></div>
-      <div class="kpi"><div class="l">Collected this year</div><div class="v">${inr(d.collected.ytd)}</div><div class="s">${fyLabel} (Apr–Mar)</div></div>
-      <div class="kpi ${d.pendingTotal > 0 ? 'red' : ''}"><div class="l">Pending</div><div class="v">${inr(d.pendingTotal)}</div><div class="s">${plural(d.pendingUnits, 'tenant')}</div></div>
-      <div class="kpi"><div class="l">Deposits held</div><div class="v">${inr(d.depositsHeld)}</div><div class="s">refundable</div></div>
+      <div class="kpi"><div class="l">Collected this month</div><div class="v" style="color:var(--green)">${inr(d.collected.mtd)}</div>
+        <div class="bar"><i style="width:${rate ?? 0}%"></i></div><div class="s">${rate === null ? 'Nothing fell due yet this month' : `${rate}% of ${inr(d.dueThisMonth)} due this month`}</div></div>
+      <div class="kpi"><div class="l">Collected this year</div><div class="v">${inr(d.collected.ytd)}</div>
+        <div class="bar"><i style="width:${fyRate ?? 0}%"></i></div><div class="s">${fyLabel} · ${fyRate === null ? 'April to March' : `${fyRate}% of ${inr(fyDue)} due`}</div></div>
+      <div class="kpi ${d.pendingTotal > 0 ? 'red' : ''}"><div class="l">Pending</div><div class="v">${inr(d.pendingTotal)}</div><div class="s">${d.pendingUnits ? `${plural(d.pendingUnits, 'tenant')} behind` : 'Everyone is up to date'}</div></div>
+      <div class="kpi"><div class="l">Deposits held</div><div class="v">${inr(d.depositsHeld)}</div><div class="s">Refundable advances</div></div>
     </div>
-    <div class="card"><div class="strip">
-      <span>Occupied <b>${d.occupied}/${d.rentableUnits}</b></span>
-      <span>Monthly rent <b>${inr(d.monthlyRentRoll)}</b></span>
-      ${d.vacant.length ? `<span>Vacant <b>${esc(d.vacant.join(', '))}</b></span>` : ''}
-    </div></div>
-    <div class="card"><h2>Pending</h2><div class="list">${pending}</div></div>
-    <div class="card"><h2>${fyLabel}: due vs collected</h2><div class="chart">${chart}</div>
-      <div class="legend"><span><i style="background:var(--soft);border:1px dashed var(--line)"></i>Fell due</span><span><i style="background:var(--green)"></i>Collected</span></div></div>`,
+    <div class="dash-grid">
+      <div class="card"><div class="card-h"><h2>${fyLabel}: due vs collected</h2><div class="legend"><span><i style="background:var(--soft);border:1px dashed var(--muted)"></i>Fell due</span><span><i style="background:var(--green)"></i>Collected</span></div></div>${chart}</div>
+      <div class="card"><div class="card-h"><h2>Occupancy</h2><span class="big">${d.occupied}<small>/${d.rentableUnits}</small></span></div>
+        ${unitMapHtml(d.unitMap)}
+        <div class="strip" style="margin-top:.8rem"><span>Monthly rent roll <b>${inr(d.monthlyRentRoll)}</b></span><span>Vacant <b>${d.vacant.length}</b></span></div></div>
+    </div>
+    <div class="dash-3">
+      <div class="card"><div class="card-h"><h2>Pending</h2>${d.pendingTotal ? `<span class="chip pending">${inr(d.pendingTotal)}</span>` : ''}</div><div class="list">${pending}</div></div>
+      <div class="card"><div class="card-h"><h2>Due in the next 7 days</h2></div><div class="list">${upcoming}</div></div>
+      <div class="card"><div class="card-h"><h2>Recent payments</h2><a class="link" href="#/payments">All →</a></div><div class="list">${recent}</div></div>
+    </div>`,
     'home'
   );
 }
@@ -199,16 +275,23 @@ async function viewUnits() {
     if (!f) floors.push((f = { name: u.floor, units: [] }));
     f.units.push(u);
   }
-  headerExtra = `<button class="icon-btn" data-add-unit title="Add a unit">＋</button>`;
+  headerExtra = `<button class="btn small primary" data-add-unit>＋ Add unit</button>`;
+  const count = (st) => units.filter((u) => u.status === st).length;
+  const filters = [['all', 'All', units.length], ['pending', 'Pending', count('pending')], ['paid', 'Paid', count('paid')], ['vacant', 'Vacant', count('vacant')], ['free', 'Rent-free', count('free')]]
+    .filter(([k, , n]) => k === 'all' || n)
+    .map(([k, l, n]) => `<button class="fchip ${k === 'all' ? 'on' : ''}" data-filter="${k}">${l} <b>${n}</b></button>`)
+    .join('');
   shell(
     'Units',
-    `${units.length} units`,
+    `${units.length} units · ${count('paid') + count('pending')} occupied`,
+    `<div class="filters">${filters}</div>` +
     floors
       .map(
         (f) => `<section class="floor"><h3>${esc(f.name)} floor</h3><div class="grid">${f.units
           .map(
-            (u) => `<a class="tile ${u.status}" href="#/unit/${esc(u.code)}"><div class="c">${esc(u.code)}</div>
-            <div class="n">${esc(u.tenancy?.contact_name || u.note || '')}&nbsp;</div>${tileLabel(u)}</a>`
+            (u) => `<a class="tile ${u.status}" data-status="${u.status}" href="#/unit/${esc(u.code)}"><div class="c">${esc(u.code)}</div>
+            <div class="n">${esc(u.tenancy?.contact_name || u.note || '')}&nbsp;</div>
+            <div class="r">${u.tenancy && !u.rent_free ? `${inr(u.tenancy.currentRent)}/mo` : '&nbsp;'}</div>${tileLabel(u)}</a>`
           )
           .join('')}</div></section>`
       )
@@ -220,6 +303,14 @@ async function viewUnits() {
             .join('')}</div></div>`
         : ''),
     'units'
+  );
+  $app.querySelectorAll('[data-filter]').forEach((b) =>
+    b.addEventListener('click', () => {
+      $app.querySelectorAll('[data-filter]').forEach((x) => x.classList.toggle('on', x === b));
+      const k = b.dataset.filter;
+      $app.querySelectorAll('.tile').forEach((t) => (t.hidden = k !== 'all' && t.dataset.status !== k));
+      $app.querySelectorAll('.floor').forEach((f) => (f.hidden = ![...f.querySelectorAll('.tile')].some((t) => !t.hidden)));
+    })
   );
   const floorsList = floors.map((f) => f.name);
   $app.querySelector('[data-add-unit]').addEventListener('click', () =>
@@ -274,11 +365,11 @@ async function viewUnit(code) {
   const d = await api(`/api/units/${encodeURIComponent(code)}`);
   const { unit, current: t, past } = d;
   headerExtra = `<a class="icon-btn" href="#/units" title="Back">←</a>`;
-  let body = '';
+  let body = '<div class="unit-cols"><div class="ucol">';
 
   if (!t) {
     body = `<div class="card"><p style="margin-top:0">${unit.rent_free ? 'Rent-free unit. Add who lives here to keep their ID on file.' : 'No tenant right now.'}</p>
-      <button class="btn primary block" data-act="add">Add tenant</button></div>`;
+      <button class="btn primary block" data-act="add">Add tenant</button></div></div><div class="ucol">`;
   } else {
     const owe =
       t.outstanding > 0
@@ -311,6 +402,8 @@ async function viewUnit(code) {
         )
         .join('')}</div>
         <button class="btn small" data-act="person" style="margin-top:.6rem">＋ Add person</button></div>
+      <div class="actions" style="margin-bottom:.9rem"><button class="btn" data-act="edit">Edit details</button><button class="btn danger" data-act="end">Move out</button></div>
+      </div><div class="ucol">
       ${unit.rent_free ? '' : `<div class="card"><h2>Months</h2><div class="list">${
         t.periods.length
           ? t.periods
@@ -338,8 +431,7 @@ async function viewUnit(code) {
           <div class="d">${esc(l.description)} · made ${fmtDate(l.created_at)}${l.sent_at ? ` · sent on ${esc(l.sent_via)} ${ago(l.sent_at)}` : ''}</div></div>
           ${l.status === 'created' ? `<button class="btn small" data-refresh="${esc(l.id)}">Check</button>` : ''}</div>`
         )
-        .join('')}</div></div>` : ''}`}
-      <div class="actions" style="margin-bottom:.9rem"><button class="btn" data-act="edit">Edit details</button><button class="btn danger" data-act="end">Move out</button></div>`;
+        .join('')}</div></div>` : ''}`}`;
   }
 
   if (past.length) {
@@ -358,6 +450,7 @@ async function viewUnit(code) {
   body += `<div class="card"><h2>Unit</h2><div class="row" style="padding:0"><div class="main"><div class="t">Rent-free unit</div><div class="d">For the security guard’s unit: no rent is charged.</div></div>
     <input type="checkbox" data-rentfree ${unit.rent_free ? 'checked' : ''} style="width:1.4rem;height:1.4rem"></div></div>`;
 
+  body += '</div></div>';
   shell(`${esc(unit.code)}`, `${esc(unit.floor)} floor${unit.note ? ' · ' + esc(unit.note) : ''}`, body, 'units');
   wireUnit(d);
 }
@@ -541,18 +634,22 @@ async function viewPayments(month) {
   shell(
     'Payments',
     `${monthOf(month)} · ${inr(total)} from ${plural(rows.length, 'payment')}`,
-    `<div class="card"><div class="list">${
+    `${rows.length ? `<div class="kpis kpis-3">${Object.entries(
+      rows.reduce((acc, p) => ((acc[p.method] = (acc[p.method] || 0) + p.amount), acc), {})
+    )
+      .map(([k, v]) => `<div class="kpi"><div class="l">${METHOD[k] || esc(k)}</div><div class="v">${inr(v)}</div></div>`)
+      .join('')}</div>` : ''}
+    <div class="card tcard">${
       rows.length
-        ? rows
+        ? `<table class="tbl"><thead><tr><th>Date</th><th>Unit</th><th>Tenant</th><th class="hide-sm">Method</th><th class="hide-sm">Reference</th><th class="num">Amount</th></tr></thead><tbody>${rows
             .map(
-              (p) => `<div class="row"><a class="code" href="#/unit/${esc(p.unit_code)}">${esc(p.unit_code)}</a>
-              <div class="main"><div class="t">${esc(p.contact_name)} ${p.test ? '<span class="chip test">test</span>' : ''}</div>
-              <div class="d">${fmtDate(p.paid_on)} · ${METHOD[p.method] || esc(p.method)}${p.reference ? ` · ${esc(p.reference)}` : ''}</div></div>
-              <div class="amt">${inr(p.amount)}</div></div>`
+              (p) => `<tr><td>${fmtDate(p.paid_on)}</td><td><a class="code sm" href="#/unit/${esc(p.unit_code)}">${esc(p.unit_code)}</a></td>
+              <td>${esc(p.contact_name)} ${p.test ? '<span class="chip test">test</span>' : ''}<div class="show-sm d">${METHOD[p.method] || esc(p.method)}</div></td>
+              <td class="hide-sm">${METHOD[p.method] || esc(p.method)}</td><td class="hide-sm mono">${esc(p.reference || '—')}</td><td class="num"><b>${inr(p.amount)}</b></td></tr>`
             )
-            .join('')
-        : '<p class="note">No payments this month.</p>'
-    }</div></div>`,
+            .join('')}</tbody><tfoot><tr><td colspan="3"><b>Total</b></td><td class="hide-sm"></td><td class="hide-sm"></td><td class="num"><b>${inr(total)}</b></td></tr></tfoot></table>`
+        : '<div class="empty"><span>No payments this month.</span></div>'
+    }</div>`,
     'payments'
   );
   $app.querySelector('[data-month]').addEventListener('change', (e) => e.target.value && viewPayments(e.target.value));
@@ -613,26 +710,26 @@ async function viewSecurity() {
     `${pending.length
       ? `<div class="sec-head red"><div class="big">${pending.length}</div><div class="txt">${pending.length === 1 ? 'unit has' : 'units have'} rent pending.<br>Remind the tenant.</div></div>`
       : `<div class="sec-head green"><div class="big">✓</div><div class="txt">All rent is paid.</div></div>`}
-    ${pending
+    <div class="sec-pend">${pending
       .map(
         (u) => `<div class="sec-row pending"><span class="code">${esc(u.code)}</span>
         <div class="main" style="flex:1"><div class="t">${esc(u.name || '')}</div><div class="act">⚠ ${esc(u.action)}</div></div>
         <div class="months">${u.months}<small>${u.months === 1 ? 'month' : 'months'}</small></div></div>`
       )
-      .join('')}
-    ${floors
+      .join('')}</div>
+    <div class="sec-grid">${floors
       .map(
-        (f) => `<h2 class="sec">${esc(f.name)} floor</h2>${f.units
+        (f) => `<div><h2 class="sec">${esc(f.name)} floor</h2>${f.units
           .map(
             (u) => `<div class="sec-row ${u.status === 'pending' ? 'pending' : ''}"><span class="code">${esc(u.code)}</span>
             <div style="flex:1"><div class="t">${esc(u.name || '')}</div></div>
             ${u.status === 'pending' ? `<div class="months">${u.months}<small>${u.months === 1 ? 'month' : 'months'}</small></div>` : label(u)}</div>`
           )
-          .join('')}`
+          .join('')}</div>`
       )
-      .join('')}
+      .join('')}</div>
     ${me.role === 'owner' ? '' : '<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">Sign out</a>'}`,
-    'menu'
+    'security'
   );
   $app.querySelector('[data-reload]').addEventListener('click', () => viewSecurity().then(() => toast('Updated')));
 }
