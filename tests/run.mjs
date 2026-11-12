@@ -253,7 +253,16 @@ await test('move-out and deposit refund', async () => {
 // --- ID photos from the security guard, with Google Drive and the AI faked
 console.log('ID photos');
 let aiNames = [];
-env.AI = { run: async (_m, input) => (input.prompt === 'agree' ? {} : { response: JSON.stringify({ names: aiNames }) }) };
+let aiCards = null; // set to return full cards (type/name/address) instead of names
+let aiLines = null; // set to make the JSON reply empty so the line-reading fallback is used
+env.AI = {
+  run: async (_m, input) => {
+    if (input.prompt === 'agree') return {};
+    if (JSON.stringify(input).includes('Transcribe every line')) return { response: aiLines || '' };
+    if (aiLines) return { response: 'I can see an identity card.' };
+    return { response: JSON.stringify({ cards: aiCards || aiNames.map((name) => ({ type: 'Aadhaar', name, address: null })) }) };
+  },
+};
 let fileNo = 0;
 const driveCalls = [];
 globalThis.fetch = async (input, init = {}) => {
@@ -285,6 +294,31 @@ await test('names must match in full: a shared first name is not enough', async 
   assert.equal(bestMatch('Karthik Ramesh', people), 'b');
   assert.equal(bestMatch('Asha Rao Shetty', people), 'c');
   assert.equal(bestMatch('Rao', [{ id: 'x', name: 'Asha Rao' }, { id: 'y', name: 'Mohan Rao' }]), null);
+});
+await test('reading ID cards: Aadhaar, PAN, DL, and ID numbers stripped', async () => {
+  const { cardsFromReply, cardsFromLines, cleanAddress } = await import('../worker/idread.ts');
+  // Aadhaar front, as lines (layout from a real card; numbers made up)
+  let c = cardsFromLines('Government of India\nमिधिन एस\nMidhin S\nDOB:28/01/1989\nMale\n2751 6154 8073');
+  assert.deepEqual([c[0].type, c[0].name], [null, 'Midhin S']);
+  // Aadhaar back
+  c = cardsFromLines('Unique Identification Authority of India\nAddress: S/O Rajender Pal Singh, C-57/A,\nSTREET NO 4, WEST VINOD NAGAR,\nEast Delhi, Delhi, 110092\n8463 0242 6474');
+  assert.equal(c[0].type, 'Aadhaar');
+  assert.equal(c[0].name, null);
+  assert.equal(c[0].address, 'S/O Rajender Pal Singh, C-57/A, STREET NO 4, WEST VINOD NAGAR, East Delhi, Delhi, 110092');
+  // PAN, new and old formats
+  c = cardsFromLines('INCOME TAX DEPARTMENT\nGOVT. OF INDIA\nPermanent Account Number Card\nABCDE1234F\nName / नाम\nRAVI KUMAR\nFather\'s Name\nSURESH KUMAR');
+  assert.deepEqual([c[0].type, c[0].name], ['PAN', 'Ravi Kumar']);
+  c = cardsFromLines('INCOME TAX DEPARTMENT GOVT. OF INDIA\nANITHA RAO\nKRISHNA RAO\nXX/XX/XXXX\nPermanent Account Number');
+  assert.deepEqual([c[0].type, c[0].name], ['PAN', 'Anitha Rao']);
+  // Driving licence: Name, not S/D/W of; address kept, licence number and DOB removed
+  c = cardsFromLines('Government of Karnataka\nDriving Licence\nDL No KA01 20190012345\nName: KARTHIK R\nS/D/W of: RAMESH K\nDOB: 01-02-1990\nAdd: #12, 3rd Cross, Koramangala, Bengaluru 560034');
+  assert.deepEqual([c[0].type, c[0].name], ['Driving licence', 'Karthik R']);
+  assert.ok(!/20190012345|1990/.test(JSON.stringify(c)));
+  // Model JSON: numbers in the address are stripped (Aadhaar / PAN), house no. and PIN kept
+  c = cardsFromReply('Here you go: {"cards":[{"type":"aadhaar card","name":"PRIYA NAIR","address":"Address: W/O Arun, 4th Floor, MG Road 1234 5678 9012, Bengaluru, Karnataka 560001"}]}');
+  assert.deepEqual(c[0], { type: 'Aadhaar', name: 'Priya Nair', address: 'W/O Arun, 4th Floor, MG Road, Bengaluru, Karnataka 560001' });
+  assert.equal(cardsFromReply('{"cards":[{"type":"PAN","name":"Government of India","address":null}]}').length, 0);
+  assert.equal(cleanAddress('ABCDE1234F'), null);
 });
 await test('nothing uploads until Google Drive is linked', async () => {
   const r = await upload('G2');
@@ -344,6 +378,27 @@ await test('owner can photograph an ID first; adding the tenant attaches it', as
   const { body } = await call('/api/units/G4');
   assert.ok(body.current.people.every((p) => p.drive_file_id));
   assert.equal(body.waitingIds.length, 0);
+});
+await test('front then back of an Aadhaar: name from the front, address from the back', async () => {
+  aiCards = [{ type: 'Aadhaar', name: 'MOHAN RAO', address: null }];
+  // Mohan already has an ID from earlier; the new front replaces it and the back adds the address
+  assert.equal((await upload('G2')).body.matched, 1);
+  aiCards = [{ type: 'Aadhaar', name: null, address: 'S/O Venkat Rao, 12 Lake Road, Bengaluru, Karnataka 560034' }];
+  const back = await upload('G2');
+  assert.equal(back.body.paired, true);
+  const p = (await call('/api/units/G2')).body.current.people.find((x) => x.name === 'Mohan Rao');
+  assert.equal(p.address, 'S/O Venkat Rao, 12 Lake Road, Bengaluru, Karnataka 560034');
+  assert.equal(p.id_type, 'Aadhaar');
+  assert.ok(!p.drive_file_name.includes('Back'), 'the front stays as the ID photo');
+  assert.equal((await call('/api/units/G2')).body.waitingIds.length, 0);
+  aiCards = null;
+});
+await test('when the model won’t answer in JSON, the printed lines are used', async () => {
+  aiLines = 'Government of India\nAsha Rao\nYear of Birth : XXXX\nFemale\nXXXX XXXX XXXX';
+  const r = await upload('G2');
+  assert.deepEqual(r.body.names, ['Asha Rao']);
+  assert.equal(r.body.matched, 1);
+  aiLines = null;
 });
 await test('a PDF sent without a file type is still accepted', async () => {
   const form = new FormData();

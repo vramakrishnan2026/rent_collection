@@ -17,7 +17,10 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - Deposits held, occupancy and the monthly rent total
   - A due-vs-collected chart for each month of the year
 - **Adding IDs (Anita):** Anita picks the unit, takes a photo of the ID (or chooses a photo or PDF), checks it, then taps **Submit**. Submitting is one-way: she can't delete, replace or view IDs afterwards.
-  - The photo goes to Drive under the unit. Cloudflare Workers AI reads only the printed name.
+  - The photo goes to Drive under the unit. Cloudflare Workers AI reads the **ID type, the holder's name and the address**. It knows the Aadhaar, PAN, driving licence, Voter ID and passport layouts: for example the English name above "DOB" on Aadhaar, and "Name" rather than "Father's Name" or "S/D/W of".
+  - **ID numbers and dates of birth are never stored**: anything that looks like one is removed before saving.
+  - A back-of-Aadhaar photo (address, no name) sent within 15 minutes of the front is joined to the same person.
+  - **Settings › Reading IDs** shows what the reader saw last time, to help when a card isn't read.
   - If the name matches someone listed in that unit in full, the photo is attached to them automatically.
   - Otherwise it waits under **New IDs from Anita** on the unit's page (the dashboard shows which units), where you attach it to a person, add a new person, or dismiss it.
   - Her screens can switch between English and Nepali.
@@ -94,6 +97,7 @@ Until Razorpay is connected, the Send link buttons show a message instead, and y
 - `worker/db.ts`: units, tenancies, people, payments, the dashboard and Anita's rent-status view
 - `worker/razorpay.ts`: payment links, the WhatsApp/SMS message, the webhook (signature-checked) and the daily check
 - `worker/devices.ts`: Anita's phone, paired with one-time codes (no Gmail)
+- `worker/idread.ts`: reads ID type, name and address off Indian ID cards (layout rules, fallbacks, ID-number scrubbing)
 - `worker/ids.ts`: Anita's Add ID uploads, name reading (Workers AI), matching to people, and attach/dismiss
 - `worker/drive.ts`: ID photos to Drive (`drive.file` scope: the app sees only its own files)
 - `public/`: the app (plain HTML, CSS and JavaScript, no build step)

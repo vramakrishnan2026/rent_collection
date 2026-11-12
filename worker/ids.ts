@@ -1,6 +1,7 @@
 import type { Env } from './env';
 import { NotFoundError, ValidationError, getSetting, setSetting, str } from './db.ts';
 import { IDS, ROOT, accessToken, ensureFolder, safeName, uploadFile } from './drive.ts';
+import { readCards, type Card } from './idread.ts';
 
 // The "Add ID" screen (security guard and owner), same idea as the Finance Tracker's House Help:
 // pick the unit, take a photo (or choose photos / PDFs). Each goes straight to Google Drive under
@@ -11,115 +12,7 @@ import { IDS, ROOT, accessToken, ensureFolder, safeName, uploadFile } from './dr
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_AI_CHARS = 1_500_000;
-const VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
-const LICENCE_KEY = 'ai_licence_agreed';
-const MAX_NAMES = 6;
-
-// ---------- reading names (ported from the Finance Tracker) ----------
-
-export function cleanName(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const s = raw.normalize('NFKC').replace(/[^\p{L}\p{M} .'-]/gu, ' ').replace(/\s+/g, ' ').trim();
-  if (s.length < 2 || s.length > 60) return null;
-  if (!/\p{L}{2}/u.test(s)) return null;
-  if (['null', 'none', 'unknown', 'not readable', 'n a', 'na'].includes(s.toLowerCase())) return null;
-  return s
-    .split(' ')
-    .map((w) => (w === w.toUpperCase() || w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w))
-    .join(' ');
-}
-
-function uniqueNames(raw: unknown[]): string[] {
-  const out: string[] = [];
-  for (const r of raw) {
-    const n = cleanName(r);
-    if (n && !out.some((o) => o.toLowerCase() === n.toLowerCase())) out.push(n);
-    if (out.length >= MAX_NAMES) break;
-  }
-  return out;
-}
-
-const REFUSAL = /\b(sorry|cannot|can't|unable|not able|no names?|i |i'm|as an ai|here (is|are)|names? (is|are))\b/i;
-
-export function namesFromReply(reply: any): string[] {
-  const out = typeof reply === 'string' ? reply : reply?.response ?? reply?.result?.response ?? reply;
-  const fromObject = (o: any): string[] | null => {
-    if (!o || typeof o !== 'object') return null;
-    if (Array.isArray(o)) return uniqueNames(o);
-    if (Array.isArray(o.names)) return uniqueNames(o.names);
-    if ('name' in o) return uniqueNames([o.name]);
-    return null;
-  };
-  const direct = fromObject(out);
-  if (direct) return direct;
-  const text = typeof out === 'string' ? out : '';
-  if (!text) return [];
-  const json = text.match(/\{[\s\S]*\}/);
-  if (json) {
-    try {
-      const parsed = fromObject(JSON.parse(json[0]));
-      if (parsed) return parsed;
-    } catch {
-      /* fall through */
-    }
-  }
-  const quoted = [...text.matchAll(/"?names?"?\s*[:=]\s*\[?\s*"([^"]+)"/gi)].map((m) => m[1]);
-  if (quoted.length) return uniqueNames(quoted);
-  const body = text.replace(/^[\s\S]*?\b(?:names?(?: printed)?(?: on (?:the|this|these) cards?)? (?:is|are)|names?:)\s*/i, '');
-  const lines = body
-    .split(/\n|;|\s+and\s+|\s+&\s+|,\s+(?=[A-Z])/)
-    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|card \d+:?)\s*/i, '').replace(/[."'`*]+$/g, '').replace(/^["'`*]+/, '').trim())
-    .filter((l) => l && l.split(/\s+/).length <= 6 && !REFUSAL.test(l));
-  return uniqueNames(lines);
-}
-
-const SYSTEM =
-  'You help a small residential landlord keep the tenant register they are required to keep. ' +
-  'Tenants handed over their identity cards when moving in. You only transcribe the printed names; ' +
-  'never output ID numbers, dates of birth, addresses or any other details.';
-const PROMPT =
-  'The photo shows one or more identity cards (sometimes two cards side by side). ' +
-  "Transcribe the holder's name from EACH card, exactly as printed in English (Latin) letters. " +
-  'Reply with ONLY this JSON: {"names": ["<name on card 1>", "<name on card 2>"]}. If no name is visible, reply {"names": []}.';
-const RETRY_PROMPT = 'What names are printed on the card or cards in this photo, in English letters? Reply with just the names, one per line, nothing else.';
-
-/** Every card holder's name in the photo. Never throws: [] if it can't read one. */
-export async function readNames(env: Env, imageBase64: string | null): Promise<string[]> {
-  if (!imageBase64 || !env.AI) return [];
-  const image = imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
-  const run = (prompt: string) =>
-    env.AI!.run(VISION_MODEL, {
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: prompt },
-      ],
-      image,
-      max_tokens: 80,
-      temperature: 0,
-    });
-  // Meta's licence for this model is accepted once per account by sending "agree".
-  const agree = async () => {
-    await env.AI!.run(VISION_MODEL, { prompt: 'agree' });
-    await setSetting(env.DB, LICENCE_KEY, 'yes');
-  };
-  try {
-    if (!(await getSetting(env.DB, LICENCE_KEY))) await agree().catch((e) => console.error('Licence', e));
-    let reply;
-    try {
-      reply = await run(PROMPT);
-    } catch (e: any) {
-      if (!/agree|licen[cs]e/i.test(String(e?.message || e))) throw e;
-      await agree();
-      reply = await run(PROMPT);
-    }
-    let names = namesFromReply(reply);
-    if (!names.length) names = namesFromReply(await run(RETRY_PROMPT));
-    return names;
-  } catch (e) {
-    console.error('Name reading failed', e);
-    return [];
-  }
-}
+const PAIR_MINUTES = 15; // a back-of-card photo (address, no name) joins the front taken just before it
 
 // ---------- matching a name to someone in the unit ----------
 
@@ -198,11 +91,14 @@ export async function handleIdUpload(request: Request, env: Env, email: string) 
   }
 
   const preview = form.get('preview');
-  const names = await readNames(env, !isPdf && typeof preview === 'string' && preview.length > 100 && preview.length < MAX_AI_CHARS ? preview : null);
+  const cards: Card[] = await readCards(env, !isPdf && typeof preview === 'string' && preview.length > 100 && preview.length < MAX_AI_CHARS ? preview : null);
+  const names = [...new Set(cards.map((c) => c.name).filter((n): n is string => Boolean(n)))];
+  const idType = cards.find((c) => c.type)?.type ?? null;
+  const address = cards.find((c) => c.address)?.address ?? null;
 
   const t = ist(takenAt);
   const ext = isPdf ? 'pdf' : blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : blob.type.startsWith('image/hei') ? 'heic' : 'jpg';
-  const label = names.length ? safeName(names.join(' & ')) : isPdf ? 'PDF' : 'Name not read';
+  const label = names.length ? safeName(names.join(' & ')) : address ? 'Back (address)' : isPdf ? 'PDF' : 'Name not read';
   const fileName = `${code} - ${t.date} ${t.time} - ${label}.${ext}`;
   let file: { id: string };
   try {
@@ -217,26 +113,51 @@ export async function handleIdUpload(request: Request, env: Env, email: string) 
 
   // Attach to people listed in the unit's current tenancy when the names match.
   const tenancy = await env.DB.prepare('SELECT id FROM tenancies WHERE unit_code = ? AND end_date IS NULL').bind(code).first<{ id: string }>();
-  const linked: string[] = [];
+  let linked: string[] = [];
   if (tenancy && names.length) {
     const people = (await env.DB.prepare('SELECT id, name FROM people WHERE tenancy_id = ?').bind(tenancy.id).all<{ id: string; name: string }>()).results;
     for (const n of names) {
       const match = bestMatch(n, people.filter((p) => !linked.includes(p.id)));
       if (match) linked.push(match);
     }
-    const nowIso = new Date().toISOString();
-    for (const pid of linked) {
-      await env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(file.id, fileName, nowIso, pid).run();
+  }
+  // The back of an Aadhaar has the address but no name: pair it with the front sent just before it.
+  let pairedWith: any = null;
+  if (!names.length && address) {
+    const since = new Date(Date.parse(takenAt) - PAIR_MINUTES * 60_000).toISOString();
+    pairedWith = await env.DB
+      .prepare("SELECT * FROM id_uploads WHERE unit_code = ? AND uploaded_by = ? AND names IS NOT NULL AND names != '[]' AND taken_at >= ? AND taken_at <= ? ORDER BY taken_at DESC LIMIT 1")
+      .bind(code, email, since, takenAt)
+      .first<any>();
+    if (pairedWith) {
+      if (pairedWith.address == null) await env.DB.prepare('UPDATE id_uploads SET address = ? WHERE id = ?').bind(address, pairedWith.id).run();
+      if (pairedWith.status === 'linked' && pairedWith.person_id) {
+        linked = (await env.DB.prepare('SELECT id FROM people WHERE drive_file_id = ?').bind(pairedWith.drive_file_id).all<{ id: string }>()).results.map((r) => r.id);
+      }
     }
   }
-  const allLinked = names.length > 0 && linked.length === names.length;
+  for (const pid of linked) await applyToPerson(env, pid, { fileId: pairedWith ? null : file.id, fileName, idType: idType ?? pairedWith?.id_type ?? null, address });
+  // Paired back photo: its address went to the people (or onto the waiting front photo), so nothing is left to do.
+  const status = pairedWith ? (linked.length ? 'linked' : 'dismissed') : names.length > 0 && linked.length === names.length ? 'linked' : 'new';
   await env.DB
     .prepare(
-      'INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id, id_type, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .bind(crypto.randomUUID(), code, tenancy?.id ?? null, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, allLinked ? 'linked' : 'new', linked[0] ?? null)
+    .bind(crypto.randomUUID(), code, tenancy?.id ?? null, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, status, linked[0] ?? null, idType, address)
     .run();
-  return { status: 200, body: { success: true, names, matched: linked.length, unit: code } };
+  return { status: 200, body: { success: true, names, idType, address: Boolean(address), matched: linked.length, paired: Boolean(pairedWith), unit: code } };
+}
+
+/** Saves an ID's file and details on a person (keeps what's already there if the ID doesn't have it). */
+async function applyToPerson(env: Env, personId: string, d: { fileId: string | null; fileName: string; idType: string | null; address: string | null }) {
+  const now = new Date().toISOString();
+  if (d.fileId) {
+    await env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(d.fileId, d.fileName, now, personId).run();
+  }
+  await env.DB
+    .prepare('UPDATE people SET id_type = COALESCE(id_type, ?), address = COALESCE(?, address) WHERE id = ?')
+    .bind(d.idType, d.address, personId)
+    .run();
 }
 
 // ---------- owner: waiting IDs ----------
@@ -290,10 +211,10 @@ export async function attachUpload(env: Env, id: string, body: any) {
     personId = crypto.randomUUID();
     await env.DB.prepare('INSERT INTO people (id, tenancy_id, name, id_type) VALUES (?, ?, ?, ?)').bind(personId, tenancyId, name, null).run();
   }
-  await env.DB.batch([
-    env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(u.drive_file_id, u.file_name, new Date().toISOString(), personId),
-    env.DB.prepare("UPDATE id_uploads SET status = 'linked', person_id = ?, tenancy_id = ? WHERE id = ?").bind(personId, tenancyId, id),
-  ]);
+  // A back-of-card photo (address only) adds the address without replacing the person's ID photo.
+  const backOnly = !safeJson(u.names).length && u.address && body?.person_id;
+  await applyToPerson(env, personId, { fileId: backOnly ? null : u.drive_file_id, fileName: u.file_name, idType: u.id_type, address: u.address });
+  await env.DB.prepare("UPDATE id_uploads SET status = 'linked', person_id = ?, tenancy_id = ? WHERE id = ?").bind(personId, tenancyId, id).run();
 }
 
 export async function dismissUpload(env: Env, id: string) {
@@ -317,9 +238,8 @@ export async function attachWaiting(env: Env, code: string) {
       if (match) linked.push(match);
     }
     if (!linked.length) continue;
-    const now = new Date().toISOString();
     for (const pid of linked) {
-      await env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(w.drive_file_id, w.file_name, now, pid).run();
+      await applyToPerson(env, pid, { fileId: w.drive_file_id, fileName: w.file_name, idType: w.id_type, address: w.address });
       people.splice(people.findIndex((p) => p.id === pid), 1);
     }
     const all = linked.length === names.length;

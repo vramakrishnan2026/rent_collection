@@ -283,3 +283,4 @@ details.guide h3 { font-size: .95rem; margin-top: 1rem; margin-bottom: .2rem; }
 .gsteps .gi { flex: none; width: 2.2rem; height: 2.2rem; border-radius: .7rem; background: var(--soft); display: grid; place-items: center; font-size: 1.1rem; position: relative; }
 .gsteps:not(.plain) .gi::after { content: counter(g); position: absolute; top: -.35rem; left: -.35rem; width: 1.05rem; height: 1.05rem; border-radius: 99rem; background: var(--blue); color: #fff; font-size: .62rem; font-weight: 800; display: grid; place-items: center; }
 details.guide > a.btn.block { width: calc(100% - 2.2rem); }
+.d.addr { white-space: normal; margin-top: .15rem; }

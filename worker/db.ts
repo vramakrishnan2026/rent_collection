@@ -84,6 +84,7 @@ export interface PersonRow {
   drive_file_id: string | null;
   drive_file_name: string | null;
   id_uploaded_at: string | null;
+  address: string | null;
 }
 
 export interface PaymentRow {
@@ -467,7 +468,8 @@ export async function updatePerson(db: D1Database, id: string, body: any) {
   const name = body?.name === undefined ? p.name : str(body.name, 80);
   if (!name) throw new ValidationError('Name is required');
   const type = body?.id_type === undefined ? p.id_type : idType(body.id_type);
-  await db.prepare('UPDATE people SET name = ?, id_type = ? WHERE id = ?').bind(name, type, id).run();
+  const address = body?.address === undefined ? p.address : str(body.address, 300) || null;
+  await db.prepare('UPDATE people SET name = ?, id_type = ?, address = ? WHERE id = ?').bind(name, type, address, id).run();
 }
 
 export async function setPersonIdFile(db: D1Database, id: string, fileId: string, fileName: string) {

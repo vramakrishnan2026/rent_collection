@@ -28,6 +28,7 @@ import * as drive from './drive.ts';
 import { WEBHOOK_PATH, handleWebhook, linkForTenancy, markSent, razorpayStatus, refreshLink, syncOpenLinks } from './razorpay.ts';
 import { todayIST } from './rent.ts';
 import { PAIR_PATH, cancelCodes, createPairCode, currentDevice, handlePair, listDevices, removeDevice } from './devices.ts';
+import { lastRead } from './idread.ts';
 import { attachUpload, attachWaiting, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
 
 const json = (data: unknown, status = 200) =>
@@ -115,7 +116,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   }
 
   if (pathname === '/api/settings' && method === 'GET') {
-    return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env) });
+    return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env), idReading: { connected: Boolean(env.AI), last: await lastRead(env) } });
   }
   if (pathname === '/api/dashboard' && method === 'GET') return json({ ...(await dashboard(env.DB, today)), idsWaiting: await waitingByUnit(env) });
   if (pathname === '/api/units' && method === 'GET') {

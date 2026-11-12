@@ -374,7 +374,8 @@ async function viewUnit(code) {
   if (d.waitingIds?.length) {
     body += `<div class="card waiting"><div class="card-h"><h2>New IDs from ${GUARD}</h2><span class="chip upcoming">${d.waitingIds.length}</span></div><div class="list">${d.waitingIds
       .map(
-        (w) => `<div class="row wrow"><div class="main"><div class="t">${w.names.length ? esc(w.names.join(', ')) : w.is_pdf ? 'PDF' : 'Name not read'}</div>
+        (w) => `<div class="row wrow"><div class="main"><div class="t">${w.names.length ? esc(w.names.join(', ')) : w.address ? 'Back of card (address)' : w.is_pdf ? 'PDF' : 'Name not read'}${w.id_type ? ` <span class="chip vacant">${esc(w.id_type)}</span>` : ''}</div>
+          ${w.address ? `<div class="d addr">📍 ${esc(w.address)}</div>` : ''}
           <div class="d">${fmtDate(w.taken_at)} · ${new Date(w.taken_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · by ${esc(w.uploaded_by)} ·
           <a href="https://drive.google.com/file/d/${esc(w.drive_file_id)}/view" target="_blank" rel="noopener">Open</a></div>
           ${t ? `<div class="wact"><select data-attach-sel="${esc(w.id)}"><option value="">Attach to…</option>${t.people
@@ -418,7 +419,7 @@ async function viewUnit(code) {
         .map(
           (p) => `<div class="row"><div class="main"><div class="t">${esc(p.name)}</div><div class="d">${esc(p.id_type || 'ID type not set')} · ${
             p.drive_file_id ? `<a href="https://drive.google.com/file/d/${esc(p.drive_file_id)}/view" target="_blank" rel="noopener">ID saved ${fmtDate(p.id_uploaded_at)}</a>` : '<span style="color:var(--red)">No ID yet</span>'
-          }</div></div>
+          }</div>${p.address ? `<div class="d addr">📍 ${esc(p.address)}</div>` : ''}</div>
           <label class="btn small">${p.drive_file_id ? 'Replace' : 'Add'} ID<input type="file" accept="image/*,application/pdf" capture="environment" data-id-for="${esc(p.id)}" hidden></label>
           <button class="btn small" data-edit-person="${esc(p.id)}" title="Edit">✎</button></div>`
         )
@@ -623,6 +624,7 @@ function wireUnit(d) {
       `<h2>${esc(p.name)}</h2><form>
         <label class="f">Name <input name="name" required maxlength="80" value="${esc(p.name)}"></label>
         <label class="f">ID type <select name="id_type"><option value="">Choose…</option>${ID_TYPES.map((x) => `<option ${x === p.id_type ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+        <label class="f">Address (from the ID) <textarea name="address" rows="3" maxlength="300">${esc(p.address)}</textarea></label>
         <div class="actions"><button type="button" class="btn danger" data-remove>Remove</button><button class="btn primary" type="submit">Save</button></div></form>`,
       async (v) => {
         await api(`/api/people/${encodeURIComponent(p.id)}`, { method: 'PUT', body: v });
@@ -737,6 +739,19 @@ async function viewPayments(month) {
 
 // ---------- owner: more ----------
 
+function idReadingHtml(r) {
+  if (!r?.connected) return '<p class="note" style="margin-top:0">Cloudflare Workers AI isn’t connected, so names and addresses can’t be read. Check that the latest deploy finished.</p>';
+  const l = r.last;
+  if (!l) return '<p class="note" style="margin-top:0">Connected. No ID has been read yet.</p>';
+  const when = `${fmtDate(l.at)} ${new Date(l.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+  if (l.ok)
+    return `<p class="note" style="margin-top:0">Last ID (${when}): read ✓ ${(l.cards || [])
+      .map((c) => `${esc(c.type || 'card')}${c.name ? ' · name' : ''}${c.address ? ' · address' : ''}`)
+      .join('; ')}</p>`;
+  return `<p class="note" style="margin-top:0">Last ID (${when}): <b style="color:var(--red)">nothing read</b>. What the reader replied (digits hidden):</p>
+    <div class="msg mono">${esc((l.tries || [l.error]).join('\n'))}</div>`;
+}
+
 async function viewMenu() {
   const s = await api('/api/settings');
   const rz = s.razorpay;
@@ -753,6 +768,7 @@ async function viewMenu() {
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
       ${s.drive.connected ? '<button class="btn small" data-drive-off>Unlink</button>' : `<a class="btn small primary" href="/api/drive/connect" ${s.drive.configured ? '' : 'aria-disabled="true"'}>Link Google Drive</a>`}</div>
+    <div class="card"><h2>Reading IDs</h2>${idReadingHtml(s.idReading)}</div>
     <div class="card"><div class="card-h"><h2>${GUARD}’s phone</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
       <p class="note" style="margin-top:0">${GUARD}’s phone signs in with a one-time code, no Gmail needed. It sees only rent status and Add ID.</p>
       <div class="list" data-devices><p class="note">Loading…</p></div>
@@ -842,6 +858,7 @@ const GT = {
     review: 'Check the photo', reviewHint: 'Is the ID clear and the name easy to read?',
     retake: 'Retake', submit: 'Submit', lockNote: 'After you submit, the ID can’t be changed or deleted.',
     submitted: 'Submitted', uploading: 'Submitting…', saved: 'Saved', nameRead: 'Name', noName: 'Name not read. That’s OK, it’s saved.',
+    addrRead: 'address read ✓', backPaired: 'Back of card: address added ✓', backSaved: 'Back of card: address read. Saved.',
     failed: 'Failed. Tap to try again', driveMissing: 'Google Drive isn’t linked yet. Please tell the owner.', none: 'Nothing submitted yet.',
     guideTitle: 'How to add a tenant’s ID', guideStart: 'Add an ID now',
     guide: [
@@ -854,7 +871,7 @@ const GT = {
     afterTitle: 'After you tap Submit',
     after: [
       ['☁️', 'The photo goes straight to the owner’s Google Drive. It is not kept on your phone.'],
-      ['📝', 'The app reads the name on the ID and shows it under <b>Submitted</b>. If the name isn’t read, that’s OK. The photo is still saved.'],
+      ['📝', 'The app reads the name and address on the ID and shows them under <b>Submitted</b>. If they aren’t read, that’s OK. The photo is still saved. Send the back right after the front: the address is joined to the same person.'],
       ['🔒', 'After you submit, the photo <b>can’t be changed, deleted or seen again</b>. If you sent a wrong photo, just tell the owner.'],
       ['👤', 'The owner checks it and attaches it to the right tenant.'],
       ['⚠️', 'If it says <b>Failed</b>, check the internet and tap it to try again.'],
@@ -871,6 +888,7 @@ const GT = {
     review: 'फोटो जाँच गर्नुहोस्', reviewHint: 'परिचयपत्र स्पष्ट छ र नाम पढ्न सकिन्छ?',
     retake: 'फेरि खिच्नुहोस्', submit: 'पठाउनुहोस्', lockNote: 'पठाएपछि परिचयपत्र बदल्न वा मेटाउन सकिँदैन।',
     submitted: 'पठाइएका', uploading: 'पठाउँदै…', saved: 'सुरक्षित भयो', nameRead: 'नाम', noName: 'नाम पढ्न सकिएन। ठीक छ, फोटो सुरक्षित भयो।',
+    addrRead: 'ठेगाना पढियो ✓', backPaired: 'पछाडिको भाग: ठेगाना थपियो ✓', backSaved: 'पछाडिको भाग: ठेगाना पढियो। सुरक्षित भयो।',
     failed: 'असफल भयो। फेरि प्रयास गर्न थिच्नुहोस्', driveMissing: 'Google Drive अझै जोडिएको छैन। कृपया मालिकलाई भन्नुहोस्।', none: 'अहिलेसम्म केही पठाइएको छैन।',
     guideTitle: 'भाडावालको परिचयपत्र कसरी थप्ने', guideStart: 'अहिले परिचयपत्र थप्नुहोस्',
     guide: [
@@ -883,7 +901,7 @@ const GT = {
     afterTitle: 'पठाउनुहोस् थिचेपछि के हुन्छ',
     after: [
       ['☁️', 'फोटो सिधै मालिकको Google Drive मा जान्छ। तपाईंको फोनमा राखिँदैन।'],
-      ['📝', 'एपले परिचयपत्रको नाम पढेर <b>पठाइएका</b> सूचीमा देखाउँछ। नाम पढ्न नसके पनि ठीक छ, फोटो सुरक्षित हुन्छ।'],
+      ['📝', 'एपले परिचयपत्रको नाम र ठेगाना पढेर <b>पठाइएका</b> सूचीमा देखाउँछ। पढ्न नसके पनि ठीक छ, फोटो सुरक्षित हुन्छ। अगाडिको भाग पठाएपछि तुरुन्तै पछाडिको भाग पठाउनुहोस्, ठेगाना सोही व्यक्तिसँग जोडिन्छ।'],
       ['🔒', 'पठाएपछि फोटो <b>बदल्न, मेटाउन वा फेरि हेर्न सकिँदैन</b>। गलत फोटो पठाउनुभयो भने मालिकलाई भन्नुहोस्।'],
       ['👤', 'मालिकले जाँचेर सही भाडावालसँग जोड्नुहुन्छ।'],
       ['⚠️', '<b>असफल भयो</b> देखिए इन्टरनेट जाँच गरेर त्यसलाई थिच्नुहोस्, फेरि पठाइन्छ।'],
@@ -1029,7 +1047,8 @@ async function viewIds() {
             <div class="d">${
               s.status === 'uploading' ? T.uploading
               : s.status === 'failed' ? `<span style="color:var(--red)">${s.drive ? T.driveMissing : T.failed}${!s.drive && s.error ? `<br><small>${esc(s.error)}</small>` : ''}</span>`
-              : s.names.length ? `${T.nameRead}: <b>${esc(s.names.join(', '))}</b>` : s.isPdf ? T.saved : T.noName
+              : s.names.length ? `${s.idType ? `${esc(s.idType)} · ` : ''}${T.nameRead}: <b>${esc(s.names.join(', '))}</b>${s.address ? ` · ${T.addrRead}` : ''}`
+              : s.address ? (s.paired ? T.backPaired : T.backSaved) : s.isPdf ? T.saved : T.noName
             }</div></div>
             ${s.status === 'saved' ? '<span class="chip paid">✓</span>' : ''}</div>`
           )
@@ -1096,6 +1115,9 @@ async function sendId(item) {
     }
     item.status = 'saved';
     item.names = data.names || [];
+    item.idType = data.idType || null;
+    item.address = Boolean(data.address);
+    item.paired = Boolean(data.paired);
     item.draft = null; // locked: nothing kept to resend or change
   } catch (e) {
     item.status = 'failed';
