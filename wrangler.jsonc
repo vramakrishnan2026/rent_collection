@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "challaghatta-rent",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-01",
+
+  // Served only at challaghatta-rent.<account>.workers.dev. No per-version preview URLs.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  // The app's pages (public/) are plain files: no build step.
+  // Every request goes through the Worker first, so nothing loads before Google sign-in.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+
+  // Cloudflare D1 (SQLite). Create it in the dashboard (Storage & Databases > D1)
+  // with the name "challaghatta-rent", then paste its Database ID below.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "challaghatta-rent",
+      "database_id": "PASTE-YOUR-D1-DATABASE-ID-HERE",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // 9:00 AM India time every day: checks Razorpay for any payment the webhook missed.
+  "triggers": { "crons": ["30 3 * * *"] },
+
+  "observability": { "enabled": true }
+}

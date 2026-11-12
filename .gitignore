@@ -1,0 +1,15 @@
+node_modules
+*.log
+.DS_Store
+.vscode/*
+.idea
+
+# Local secrets
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# Cloudflare local state
+.wrangler/
