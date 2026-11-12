@@ -28,7 +28,7 @@ import * as drive from './drive.ts';
 import { WEBHOOK_PATH, handleWebhook, linkForTenancy, markSent, razorpayStatus, refreshLink, syncOpenLinks } from './razorpay.ts';
 import { todayIST } from './rent.ts';
 import { PAIR_PATH, cancelCodes, createPairCode, currentDevice, handlePair, listDevices, removeDevice } from './devices.ts';
-import { attachUpload, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
+import { attachUpload, attachWaiting, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -148,7 +148,12 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   }
 
   if (resource === 'tenancies') {
-    if (seg.length === 1 && method === 'POST') return json({ success: true, id: await createTenancy(env.DB, await readJson(request)) }, 201);
+    if (seg.length === 1 && method === 'POST') {
+      const body = await readJson(request);
+      const newId = await createTenancy(env.DB, body);
+      const idsAttached = await attachWaiting(env, String(body?.unit_code || '').toUpperCase());
+      return json({ success: true, id: newId, idsAttached }, 201);
+    }
     if (seg.length === 2 && method === 'PUT') {
       await updateTenancy(env.DB, id, await readJson(request));
       return json({ success: true });

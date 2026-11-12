@@ -339,9 +339,10 @@ async function viewUnits() {
 
 // ---------- owner: one unit ----------
 
-function tenancyForm(t, rentFree) {
+function tenancyForm(t, rentFree, prefill = null) {
   return `<form>
-    <label class="f">Tenant name (rent links are addressed to them) <input name="contact_name" required maxlength="80" value="${esc(t?.contact_name)}"></label>
+    ${prefill?.note ? `<div class="banner">${prefill.note}</div>` : ''}
+    <label class="f">Tenant name (rent links are addressed to them) <input name="contact_name" required maxlength="80" value="${esc(t?.contact_name ?? prefill?.contact_name)}"></label>
     <div class="two">
       <label class="f">WhatsApp number <input name="whatsapp" inputmode="tel" placeholder="98xxxxxxxx" value="${esc(t?.whatsapp)}"></label>
       <label class="f">SMS number <small>(if different)</small><input name="phone" inputmode="tel" placeholder="Same as WhatsApp" value="${esc(t?.phone && t.phone !== t.whatsapp ? t.phone : '')}"></label>
@@ -351,7 +352,7 @@ function tenancyForm(t, rentFree) {
       ${rentFree ? '<input type="hidden" name="base_rent" value="0">' : `<label class="f">Monthly rent (₹) <input name="base_rent" inputmode="numeric" required value="${esc(t?.base_rent ?? '')}"></label>`}
     </div>
     <label class="f">Advance / deposit (₹, refundable) <input name="deposit" inputmode="numeric" value="${esc(t?.deposit ?? '')}"></label>
-    ${t ? '' : `<label class="f">Everyone living there <small>(one name per line; add ID photos after saving)</small><textarea name="people" rows="3" placeholder="Same as tenant name if left empty"></textarea></label>`}
+    ${t ? '' : `<label class="f">Everyone living there <small>(one name per line)</small><textarea name="people" rows="3" placeholder="Same as tenant name if left empty">${esc((prefill?.people || []).join('\n'))}</textarea></label>`}
     <label class="f">Notes <textarea name="notes" rows="2" maxlength="500">${esc(t?.notes)}</textarea></label>
     ${rentFree ? '' : '<p class="note">Rent is due on the move-in day every month and goes up 5% every 11 months.</p>'}
     <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
@@ -380,7 +381,7 @@ async function viewUnit(code) {
               .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.drive_file_id ? ' (has ID)' : ''}</option>`)
               .join('')}<option value="__new">＋ New person…</option></select>
             <button class="btn small danger" data-dismiss="${esc(w.id)}">Dismiss</button></div>`
-            : `<div class="d">Add the tenant first, then attach this ID. <button class="btn small danger" data-dismiss="${esc(w.id)}">Dismiss</button></div>`}
+            : `<div class="wact"><button class="btn small primary" data-tenant-from="${esc(w.id)}">Add as new tenant</button><button class="btn small danger" data-dismiss="${esc(w.id)}">Dismiss</button></div>`}
         </div></div>`
       )
       .join('')}</div></div>`;
@@ -388,7 +389,9 @@ async function viewUnit(code) {
 
   if (!t) {
     body += `<div class="card"><p style="margin-top:0">${unit.rent_free ? 'Rent-free unit. Add who lives here to keep their ID on file.' : 'No tenant right now.'}</p>
-      <button class="btn primary block" data-act="add">Add tenant</button></div></div><div class="ucol">`;
+      <div class="actions"><button class="btn primary" data-act="add">Add tenant</button>
+      <label class="btn">📷 Start from ID photo<input type="file" accept="image/*,application/pdf" capture="environment" data-id-first hidden></label></div>
+      <p class="note">Start from an ID photo: the app reads the name off the ID and fills in the form for you. The photo is saved to Drive.</p></div></div><div class="ucol">`;
   } else {
     const owe =
       t.outstanding > 0
@@ -506,15 +509,46 @@ function wireUnit(d) {
     })
   );
 
-  on('[data-act=add]', () =>
-    openSheet(`<h2>New tenant · ${esc(unit.code)}</h2>${tenancyForm(null, unit.rent_free)}`, async (v) => {
+  const addTenant = (prefill = null) =>
+    openSheet(`<h2>New tenant · ${esc(unit.code)}</h2>${tenancyForm(null, unit.rent_free, prefill)}`, async (v) => {
       const people = String(v.people || '').split('\n').map((s) => s.trim()).filter(Boolean).map((name) => ({ name }));
-      await api('/api/tenancies', { method: 'POST', body: { ...tenancyBody(v), unit_code: unit.code, people } });
+      const r = await api('/api/tenancies', { method: 'POST', body: { ...tenancyBody(v), unit_code: unit.code, people } });
       closeSheet();
-      toast('Tenant added');
+      toast(r.idsAttached ? `Tenant added · ${plural(r.idsAttached, 'ID')} attached` : 'Tenant added');
       reload();
-    })
-  );
+    });
+  const fromNames = (names) =>
+    names.length
+      ? { contact_name: names[0], people: names, note: `Name read from the ID: <b>${esc(names.join(', '))}</b>. Check the spelling.` }
+      : { note: 'Couldn’t read a name from the ID (PDFs and unclear photos can’t be read). Type it in; the ID is saved and will be attached when the names match.' };
+  on('[data-act=add]', () => addTenant());
+  on('[data-tenant-from]', (el) => addTenant(fromNames(d.waitingIds.find((w) => w.id === el.dataset.tenantFrom)?.names || [])));
+  $app.querySelector('[data-id-first]')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    toast('Reading the ID…');
+    try {
+      const form = new FormData();
+      form.append('unit', unit.code);
+      form.append('takenAt', new Date().toISOString());
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      if (isPdf) form.append('photo', new Blob([file], { type: 'application/pdf' }), 'id.pdf');
+      else {
+        const p = await preparePhoto(file).catch(() => ({ photo: file, preview: null }));
+        form.append('photo', p.photo, 'id.jpg');
+        if (p.preview) form.append('preview', p.preview);
+      }
+      const res = await fetch('/api/id-uploads', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || `Error ${res.status}`);
+      await reload(); // shows the photo under "New IDs" in case the form is closed
+      addTenant(fromNames(data.names || []));
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      e.target.value = '';
+    }
+  });
   on('[data-rentfree]', async (el) => {
     if (el.checked && t && !confirm(`Make ${unit.code} rent-free? The current tenant’s rent will be set to ₹0.`)) {
       el.checked = false;

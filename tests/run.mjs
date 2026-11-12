@@ -335,6 +335,16 @@ await test('IDs for an empty unit wait until the tenant is added; they can be di
   assert.equal((await call(`/api/id-uploads/${w.id}/dismiss`, { method: 'POST', body: {} })).status, 200);
   assert.equal((await call('/api/units/G3')).body.waitingIds.length, 0);
 });
+await test('owner can photograph an ID first; adding the tenant attaches it', async () => {
+  aiNames = ['MEERA NAIR', 'Arun Nair'];
+  const r = await upload('G4', owner);
+  assert.deepEqual(r.body.names, ['Meera Nair', 'Arun Nair']);
+  const add = await call('/api/tenancies', { method: 'POST', body: { unit_code: 'G4', contact_name: 'Meera Nair', start_date: start, base_rent: 9000, people: [{ name: 'Meera Nair' }, { name: 'Arun Nair' }] } });
+  assert.equal(add.body.idsAttached, 2);
+  const { body } = await call('/api/units/G4');
+  assert.ok(body.current.people.every((p) => p.drive_file_id));
+  assert.equal(body.waitingIds.length, 0);
+});
 await test('a PDF sent without a file type is still accepted', async () => {
   const form = new FormData();
   form.append('unit', 'G2');

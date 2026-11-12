@@ -300,3 +300,31 @@ export async function dismissUpload(env: Env, id: string) {
   await getUpload(env, id);
   await env.DB.prepare("UPDATE id_uploads SET status = 'dismissed' WHERE id = ?").bind(id).run();
 }
+
+/** After a tenant is added: attach any waiting ID photos for that unit whose names match people listed. */
+export async function attachWaiting(env: Env, code: string) {
+  const tenancy = await env.DB.prepare('SELECT id FROM tenancies WHERE unit_code = ? AND end_date IS NULL').bind(code).first<{ id: string }>();
+  if (!tenancy) return 0;
+  const waiting = (await env.DB.prepare("SELECT * FROM id_uploads WHERE unit_code = ? AND status = 'new' ORDER BY taken_at").bind(code).all<any>()).results;
+  if (!waiting.length) return 0;
+  const people = (await env.DB.prepare('SELECT id, name FROM people WHERE tenancy_id = ? AND drive_file_id IS NULL').bind(tenancy.id).all<{ id: string; name: string }>()).results;
+  let n = 0;
+  for (const w of waiting) {
+    const names = safeJson(w.names);
+    const linked: string[] = [];
+    for (const name of names) {
+      const match = bestMatch(name, people.filter((p) => !linked.includes(p.id)));
+      if (match) linked.push(match);
+    }
+    if (!linked.length) continue;
+    const now = new Date().toISOString();
+    for (const pid of linked) {
+      await env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(w.drive_file_id, w.file_name, now, pid).run();
+      people.splice(people.findIndex((p) => p.id === pid), 1);
+    }
+    const all = linked.length === names.length;
+    await env.DB.prepare('UPDATE id_uploads SET status = ?, person_id = ?, tenancy_id = ? WHERE id = ?').bind(all ? 'linked' : 'new', linked[0], tenancy.id, w.id).run();
+    n += linked.length;
+  }
+  return n;
+}
