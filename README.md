@@ -28,7 +28,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
    - Build command: *(leave empty)*
    - Deploy command: `npm run deploy`. This applies database changes, then deploys.
    - Every push to `main` deploys from then on.
-3. The app's address will be `https://challaghatta-rent.<your-subdomain>.workers.dev`.
+3. The app's address will be `https://rent-collection.<your-subdomain>.workers.dev`.
 
 ### 2. Google (sign-in and Drive, on the new Gmail account)
 
@@ -38,14 +38,14 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
    - Scopes: `openid`, `email`, `profile`, `.../auth/drive.file`
    - Publish it (**In production**) so the sign-in doesn't expire every 7 days.
 3. Go to **Credentials › Create OAuth client ID › Web application** and add two **Authorised redirect URIs**:
-   - `https://challaghatta-rent.<your-subdomain>.workers.dev/auth/callback`
-   - `https://challaghatta-rent.<your-subdomain>.workers.dev/api/drive/callback`
+   - `https://rent-collection.<your-subdomain>.workers.dev/auth/callback`
+   - `https://rent-collection.<your-subdomain>.workers.dev/api/drive/callback`
 
 ### 3. Razorpay (test mode first)
 
 1. In the Razorpay Dashboard, switch to **Test mode**, then go to **Account & Settings › API Keys › Generate**.
 2. Go to **Webhooks › Add new webhook**:
-   - URL: `https://challaghatta-rent.<your-subdomain>.workers.dev/api/razorpay/webhook`
+   - URL: `https://rent-collection.<your-subdomain>.workers.dev/api/razorpay/webhook`
    - Secret: make up a long random string.
    - Events: `payment_link.paid`, `payment_link.cancelled`, `payment_link.expired`
 
