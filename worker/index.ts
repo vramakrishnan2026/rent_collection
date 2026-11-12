@@ -63,6 +63,13 @@ function drivePage(ok: boolean, message: string) {
   });
 }
 
+/** The owner's PIN for protected actions (rent-free, deleting payments). Default 1234. */
+const ownerPin = (env: Env) => env.OWNER_PIN || env.RENT_FREE_PIN || '1234';
+async function requirePin(request: Request, env: Env) {
+  const body: any = await request.json().catch(() => ({}));
+  if (String(body?.pin ?? '').trim() !== ownerPin(env)) throw new ValidationError('Wrong PIN');
+}
+
 async function handleApi(request: Request, env: Env, url: URL, user: User): Promise<Response> {
   const { pathname } = url;
   const method = request.method;
@@ -144,7 +151,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
       return json({ ...(await unitDetail(env.DB, code, today)), waitingIds: await waitingIds(env, code) });
     }
     if (seg.length === 2 && method === 'PUT') {
-      await updateUnit(env.DB, id.toUpperCase(), await readJson(request), env.RENT_FREE_PIN || '1234');
+      await updateUnit(env.DB, id.toUpperCase(), await readJson(request), ownerPin(env));
       return json({ success: true });
     }
   }
@@ -211,8 +218,12 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
     if (seg.length === 1 && method === 'POST') {
       return json({ success: true, id: await recordPayment(env.DB, await readJson(request), user.email, today) }, 201);
     }
-    if (seg.length === 2 && id === 'test' && method === 'DELETE') return json({ success: true, deleted: await deleteTestPayments(env.DB) });
+    if (seg.length === 2 && id === 'test' && method === 'DELETE') {
+      await requirePin(request, env);
+      return json({ success: true, deleted: await deleteTestPayments(env.DB) });
+    }
     if (seg.length === 2 && method === 'DELETE') {
+      await requirePin(request, env);
       await deletePayment(env.DB, id);
       return json({ success: true });
     }

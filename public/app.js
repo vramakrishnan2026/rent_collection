@@ -688,16 +688,32 @@ function wireUnit(d) {
       }
     })
   );
-  on('[data-del-pay]', async (el) => {
-    if (!confirm('Delete this payment?')) return;
-    await api(`/api/payments/${encodeURIComponent(el.dataset.delPay)}`, { method: 'DELETE' }).catch((e) => toast(e.message));
-    reload();
+  on('[data-del-pay]', (el) => {
+    const p = t.payments.find((x) => x.id === el.dataset.delPay);
+    pinSheet(`Delete ${inr(p.amount)} paid on ${fmtDate(p.paid_on)}?`, 'Delete payment', async (pin) => {
+      await api(`/api/payments/${encodeURIComponent(p.id)}`, { method: 'DELETE', body: { pin } });
+      toast('Payment deleted');
+      reload();
+    });
   });
   on('[data-refresh]', async (el) => {
     const r = await api(`/api/links/${encodeURIComponent(el.dataset.refresh)}/refresh`, { method: 'POST', body: {} }).catch((e) => toast(e.message));
     if (r) toast(r.status === 'paid' ? 'Paid ✓' : 'Not paid yet');
     reload();
   });
+}
+
+/** Asks for the owner PIN, then runs `action(pin)`. A wrong PIN shows the error and keeps the box open. */
+function pinSheet(question, button, action) {
+  openSheet(
+    `<h2>${esc(question)}</h2><form>
+      <label class="f">PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required maxlength="20"></label>
+      <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary danger-fill" type="submit">${esc(button)}</button></div></form>`,
+    async (v) => {
+      await action(v.pin);
+      closeSheet();
+    }
+  );
 }
 
 /** Owner upload of one ID photo/PDF: saved to Drive, type/name/address read. personId = attach to that person. */
@@ -935,11 +951,12 @@ async function viewMenu() {
       }
     )
   );
-  $app.querySelector('[data-clear-test]').addEventListener('click', async () => {
-    if (!confirm('Delete every payment made with Razorpay test keys?')) return;
-    const r = await api('/api/payments/test', { method: 'DELETE' }).catch((e) => toast(e.message));
-    if (r) toast(`${plural(r.deleted, 'test payment')} deleted`);
-  });
+  $app.querySelector('[data-clear-test]').addEventListener('click', () =>
+    pinSheet('Delete every payment made with Razorpay test keys?', 'Delete test payments', async (pin) => {
+      const r = await api('/api/payments/test', { method: 'DELETE', body: { pin } });
+      toast(`${plural(r.deleted, 'test payment')} deleted`);
+    })
+  );
   $app.querySelector('[data-drive-off]')?.addEventListener('click', async () => {
     await api('/api/drive/disconnect', { method: 'POST', body: {} });
     viewMenu();

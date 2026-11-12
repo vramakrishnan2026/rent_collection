@@ -149,6 +149,12 @@ await test('a part payment clears the oldest month first', async () => {
   const future = await call('/api/payments', { method: 'POST', body: { tenancy_id: tid, amount: 1, paid_on: addMonths(today, 1), method: 'cash' } });
   assert.equal(future.status, 400);
 });
+await test('deleting a payment needs the PIN', async () => {
+  const pid = (await call('/api/payments', { method: 'POST', body: { tenancy_id: tid, amount: 1, paid_on: today, method: 'cash' } })).body.id;
+  assert.equal((await call(`/api/payments/${pid}`, { method: 'DELETE' })).status, 400);
+  assert.equal((await call(`/api/payments/${pid}`, { method: 'DELETE', body: { pin: '9999' } })).status, 400);
+  assert.equal((await call(`/api/payments/${pid}`, { method: 'DELETE', body: { pin: '1234' } })).status, 200);
+});
 await test('security guard sees months pending, never amounts, and nothing else', async () => {
   const { body } = await call('/api/security', { cookie: guard });
   const g1 = body.units.find((u) => u.code === 'G1');
@@ -252,7 +258,8 @@ await test('webhook: a paid link records the payment once', async () => {
   assert.equal(sec.body.units.find((u) => u.code === 'G1').status, 'paid');
 });
 await test('test payments can be cleared before going live', async () => {
-  const r = await call('/api/payments/test', { method: 'DELETE' });
+  assert.equal((await call('/api/payments/test', { method: 'DELETE' })).status, 400, 'needs the PIN');
+  const r = await call('/api/payments/test', { method: 'DELETE', body: { pin: '1234' } });
   assert.equal(r.body.deleted, 1);
   assert.equal((await call('/api/units/G1')).body.current.outstanding, 2000);
 });
