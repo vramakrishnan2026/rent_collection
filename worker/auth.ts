@@ -40,6 +40,7 @@ const PUBLIC_PATHS = new Set([
   '/icon-512.png',
   '/apple-touch-icon.png',
   '/favicon.ico',
+  '/sw.js', // service worker for reminders: code only, no data
 ]);
 
 export const isPublicPath = (pathname: string) => PUBLIC_PATHS.has(pathname);

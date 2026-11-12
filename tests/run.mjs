@@ -531,6 +531,39 @@ await test('the guard can upload but not attach, dismiss or see IDs', async () =
   assert.equal((await upload('ZZ9')).status, 400);
 });
 
+// --- "Send all" queue and reminders
+console.log('Send all and reminders');
+await test('the queue lists everyone owing for a finished month, and who has been sent a link', async () => {
+  const id = (await call('/api/tenancies', { method: 'POST', body: { unit_code: 'S4', contact_name: 'Queue Test', whatsapp: '9876500099', start_date: '2026-09-01', base_rent: 10000 } })).body.id;
+  let q = (await call('/api/collect')).body;
+  assert.equal(q.forMonth, 'Oct 2026');
+  let item = q.items.find((i) => i.unit === 'S4');
+  assert.deepEqual([item.amount, item.sentThisMonth, item.hasWhatsapp], [20000, false, true]); // September + October
+  assert.ok(!q.items.some((i) => i.unit === 'T6'), 'rent-free units are skipped');
+  assert.ok(!q.items.some((i) => i.unit === 'S5'), 'tenants not charged yet are skipped');
+  await DB.prepare("INSERT INTO payment_links (id, tenancy_id, amount, short_url, sent_at, sent_via) VALUES ('plink_q', ?, 20000, 'https://rzp.io/x', ?, 'whatsapp')").bind(id, '2026-11-12T05:00:00Z').run();
+  q = (await call('/api/collect')).body;
+  assert.equal(q.items.find((i) => i.unit === 'S4').sentThisMonth, true);
+  assert.equal((await call('/api/collect', { cookie: guard })).status, 403);
+});
+await test('reminder on the 1st and, if any are left, on the 3rd', async () => {
+  const { rentReminders } = await import('../worker/collect.ts');
+  // A real browser-style subscription key, so the message is genuinely encrypted
+  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const b64u = (b) => Buffer.from(b).toString('base64url');
+  await call('/api/push/subscribe', { method: 'POST', body: { endpoint: 'https://push.example/abc', keys: { p256dh: b64u(raw), auth: b64u(crypto.getRandomValues(new Uint8Array(16))) } } });
+  const pushes = [];
+  const prev = globalThis.fetch;
+  globalThis.fetch = async (u, init) => (String(u).startsWith('https://push.example/') ? (pushes.push(init), new Response(null, { status: 201 })) : prev(u, init));
+  assert.equal((await rentReminders(env, '2026-12-01')).sent, 1);
+  assert.match(pushes[0].headers.Authorization, /^vapid t=/);
+  assert.equal(pushes[0].headers['Content-Encoding'], 'aes128gcm');
+  assert.deepEqual(await rentReminders(env, '2026-12-02'), { skipped: true });
+  assert.equal((await rentReminders(env, '2026-12-03')).sent, 1, 'nobody was sent a link in December yet');
+  globalThis.fetch = prev;
+});
+
 // --- security phones without Gmail
 console.log('Security phones');
 const pair = async (code) => {

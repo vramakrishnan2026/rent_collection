@@ -307,3 +307,16 @@ details.guide > a.btn.block { width: calc(100% - 2.2rem); }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .review-note { margin-top: .4rem; padding: .5rem .7rem; border-radius: .7rem; background: var(--amber-bg); color: var(--amber); font-size: .82rem; }
 .review-note a { color: inherit; }
+
+/* Send all */
+.sendbar { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .95rem 1.1rem; margin-bottom: .9rem; border-radius: var(--radius);
+  background: #16A34A; color: #fff; text-decoration: none; font-size: .95rem; }
+.sendbar .go { font-weight: 800; white-space: nowrap; }
+.sendprog { height: .5rem; background: var(--soft); border-radius: 99rem; overflow: hidden; margin-bottom: .9rem; }
+.sendprog i { display: block; height: 100%; background: #16A34A; transition: width .3s; }
+.sendcard { border: 2px solid #16A34A; }
+.sendcard .sc-top { display: flex; align-items: center; gap: .8rem; margin-bottom: .8rem; }
+.sendcard .sc-top .code { min-width: 3.2rem; height: 3.2rem; font-size: 1.15rem; }
+.sendcard .sc-top .amt { font-size: 1.3rem; }
+.sc-btns .btn { min-height: 3.4rem; font-size: 1.1rem; }
+@media (min-width: 1024px) { .sendcard { max-width: 40rem; } }

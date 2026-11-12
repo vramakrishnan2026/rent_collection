@@ -133,6 +133,7 @@ function shell(title, sub, body, tab) {
   const items = [
     ['home', '⌂', 'Home', 'Dashboard'],
     ['units', '▦', 'Units', 'Units'],
+    ['send', '📤', 'Send', 'Send links'],
     ['payments', '₹', 'Payments', 'Payments'],
     ['menu', '☰', 'More', 'Settings'],
   ];
@@ -186,7 +187,7 @@ function unitMapHtml(units) {
 // ---------- owner: dashboard ----------
 
 async function viewHome() {
-  const [d, s] = await Promise.all([api('/api/dashboard'), api('/api/settings')]);
+  const [d, s, q] = await Promise.all([api('/api/dashboard'), api('/api/settings'), api('/api/collect').catch(() => null)]);
   const fyLabel = `FY ${d.financialYear.start.slice(0, 4)}–${d.financialYear.end.slice(2, 4)}`;
   const max = Math.max(1, ...d.months.map((m) => Math.max(m.due, m.collected)));
   const fyDue = d.months.reduce((a, m) => a + m.due, 0);
@@ -249,6 +250,7 @@ async function viewHome() {
     'Dashboard',
     `Challaghatta Home · ${fmtDate(d.today)}`,
     `${banners.map((b) => `<div class="banner">${b}</div>`).join('')}
+    ${q && q.toSend ? `<a class="sendbar" href="#/send"><span>📤 <b>Send rent links</b> · ${plural(q.toSend, 'tenant')} to send for ${esc(q.forMonth)}</span><span class="go">Start →</span></a>` : ''}
     ${noTenants ? `<div class="hero"><div><b>Add your first tenant</b><span>Open a unit, add who lives there, their rent and deposit. The dashboard fills in from there.</span></div><a class="btn primary" href="#/units">Go to units</a></div>` : ''}
     <div class="kpis">
       <div class="kpi"><div class="l">Collected this month</div><div class="v" style="color:var(--green)">${inr(d.collected.mtd)}</div>
@@ -934,6 +936,151 @@ async function viewPayments(month) {
   $app.querySelector('[data-month]').addEventListener('change', (e) => e.target.value && viewPayments(e.target.value));
 }
 
+// ---------- reminders (web push) ----------
+
+const urlB64ToBytes = (s) => {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+};
+async function pushState() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'denied') return 'blocked';
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  const sub = reg && (await reg.pushManager.getSubscription());
+  return sub ? 'on' : 'off';
+}
+async function renderPushCard() {
+  const box = $app.querySelector('[data-push]');
+  if (!box) return;
+  const st = await pushState().catch(() => 'unsupported');
+  const iphone = /iPhone|iPad/.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
+  box.innerHTML =
+    st === 'on'
+      ? `<p class="note" style="margin-top:0"><b>On.</b> At 9 AM on the 1st you’ll get “Rent links ready”, and on the 3rd a reminder if any are left.</p>
+         <div class="actions"><button class="btn small" data-push-test>Send a test</button><button class="btn small" data-push-off>Turn off</button></div>`
+      : st === 'blocked'
+      ? '<p class="note" style="margin-top:0">Notifications are blocked for this site. Allow them in the browser’s site settings, then come back.</p>'
+      : st === 'unsupported' || iphone
+      ? `<p class="note" style="margin-top:0">${iphone ? 'On iPhone, add this app to the Home Screen first (Share › Add to Home Screen), open it from there, then turn reminders on here.' : 'This browser can’t show reminders. Open the app in Chrome.'}</p>`
+      : `<p class="note" style="margin-top:0">Get a reminder on this phone at 9 AM on the 1st to send the rent links, and on the 3rd if any are left.</p>
+         <button class="btn small primary" data-push-on>Turn on reminders</button>`;
+  box.querySelector('[data-push-on]')?.addEventListener('click', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      if ((await Notification.requestPermission()) !== 'granted') return renderPushCard();
+      const { publicKey } = await api('/api/push/key');
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(publicKey) });
+      await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
+      toast('Reminders are on');
+    } catch (e) {
+      toast(`Couldn’t turn on reminders: ${e.message}`, 6000);
+    }
+    renderPushCard();
+  });
+  box.querySelector('[data-push-off]')?.addEventListener('click', async () => {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    const sub = reg && (await reg.pushManager.getSubscription());
+    if (sub) {
+      await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe().catch(() => {});
+    }
+    renderPushCard();
+  });
+  box.querySelector('[data-push-test]')?.addEventListener('click', async () => {
+    const r = await api('/api/push/test', { method: 'POST', body: {} }).catch((e) => toast(e.message));
+    if (r) toast(r.sent ? 'Test sent. It should appear in a few seconds.' : 'The test couldn’t be sent. Turn reminders off and on again.', 4000);
+  });
+}
+
+// ---------- owner: Send all ----------
+
+const sendState = { skipped: new Set(), focus: null, links: {}, errors: {} };
+
+async function viewSend() {
+  const q = await api('/api/collect');
+  const ready = (i) => i.hasPhone && !sendState.skipped.has(i.tenancyId);
+  const queue = q.items.filter((i) => !i.sentThisMonth && ready(i));
+  const cur = (sendState.focus && q.items.find((i) => i.tenancyId === sendState.focus)) || queue[0] || null;
+  const sent = q.items.filter((i) => i.sentThisMonth).length;
+  const pct = q.items.length ? Math.round((sent / q.items.length) * 100) : 100;
+  const chip = (i) =>
+    i.sentThisMonth ? `<span class="chip paid">Sent ✓</span>`
+    : !i.hasPhone ? '<span class="chip vacant">No number</span>'
+    : sendState.skipped.has(i.tenancyId) ? '<span class="chip vacant">Skipped</span>'
+    : cur && i.tenancyId === cur.tenancyId ? '<span class="chip upcoming">Now</span>'
+    : '<span class="chip pending">To send</span>';
+  shell(
+    'Send rent links',
+    `${esc(q.forMonth)} rent · ${sent} of ${q.items.length} sent`,
+    q.items.length
+      ? `<div class="sendprog"><i style="width:${pct}%"></i></div>
+      ${cur ? `<div class="card sendcard" data-card>
+          <div class="sc-top"><span class="code">${esc(cur.unit)}</span><div class="main"><div class="t">${esc(cur.name)}</div>
+            <div class="d">${cur.overdueMonths ? `<span style="color:var(--red)">${plural(cur.overdueMonths, 'month')} overdue</span> · ` : ''}${cur.sentThisMonth ? 'Already sent this month' : 'Not sent yet'}</div></div>
+            <div class="amt">${inr(cur.amount)}</div></div>
+          <div class="msg" data-msg>Getting the link…</div>
+          <div class="actions sc-btns"><a class="btn green" data-wa aria-disabled="true">WhatsApp</a><a class="btn" data-sms aria-disabled="true">SMS</a></div>
+          <button class="btn block small" data-skip style="margin-top:.5rem">Skip for now</button>
+        </div>`
+        : `<div class="card"><div class="empty">✓<span>${sent === q.items.length ? `All ${plural(sent, 'link')} sent for ${esc(q.forMonth)}.` : 'Nothing left in the queue. Skipped tenants and those without a number are listed below.'}</span></div></div>`}
+      <h2 class="sec">Everyone</h2><div class="card"><div class="list">${q.items
+        .map(
+          (i) => `<div class="row"><a class="code" href="#/unit/${esc(i.unit)}">${esc(i.unit)}</a><div class="main"><div class="t">${esc(i.name)}</div>
+          <div class="d">${inr(i.amount)}${i.lastSentAt ? ` · last sent ${ago(i.lastSentAt)}` : ''}</div></div>${chip(i)}
+          ${i.hasPhone && (!cur || i.tenancyId !== cur.tenancyId) ? `<button class="btn small" data-focus="${esc(i.tenancyId)}">${i.sentThisMonth ? 'Resend' : 'Send'}</button>` : ''}</div>`
+        )
+        .join('')}</div></div>`
+      : '<div class="card"><div class="empty">✓<span>Nobody owes rent for a month that has ended.</span></div></div>',
+    'send'
+  );
+  $app.querySelectorAll('[data-focus]').forEach((b) =>
+    b.addEventListener('click', () => {
+      sendState.focus = b.dataset.focus;
+      sendState.skipped.delete(b.dataset.focus);
+      viewSend();
+      window.scrollTo(0, 0);
+    })
+  );
+  if (!cur) return;
+  $app.querySelector('[data-skip]').addEventListener('click', () => {
+    sendState.skipped.add(cur.tenancyId);
+    sendState.focus = null;
+    viewSend();
+  });
+  // Make (or reuse) the Razorpay link, then arm the WhatsApp/SMS buttons.
+  let r = sendState.links[cur.tenancyId];
+  if (!r) {
+    try {
+      r = sendState.links[cur.tenancyId] = await api(`/api/tenancies/${encodeURIComponent(cur.tenancyId)}/link`, { method: 'POST', body: {} });
+    } catch (e) {
+      const m = $app.querySelector('[data-msg]');
+      if (m) m.outerHTML = `<div class="err">${esc(e.message)}</div>`;
+      return;
+    }
+  }
+  const card = $app.querySelector('[data-card]');
+  if (!card) return;
+  card.querySelector('[data-msg]').textContent = r.message;
+  const arm = (el, href, via) => {
+    if (!href) return;
+    el.href = href;
+    el.removeAttribute('aria-disabled');
+    if (via === 'whatsapp') el.target = '_blank';
+    el.addEventListener('click', () => {
+      fetch(`/api/links/${encodeURIComponent(r.link.id)}/sent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ via }), keepalive: true }).catch(() => {});
+      delete sendState.links[cur.tenancyId];
+      sendState.focus = null;
+      // When you come back from WhatsApp, the next tenant is ready.
+      setTimeout(() => location.hash.startsWith('#/send') && viewSend(), 1200);
+    });
+  };
+  arm(card.querySelector('[data-wa]'), r.whatsappUrl, 'whatsapp');
+  arm(card.querySelector('[data-sms]'), r.smsUrl, 'sms');
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && location.hash.startsWith('#/send') && me?.role === 'owner') viewSend().catch(() => {});
+});
+
 // ---------- owner: more ----------
 
 function idReadingHtml(r) {
@@ -965,6 +1112,7 @@ async function viewMenu() {
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
       ${s.drive.connected ? '<button class="btn small" data-drive-off>Unlink</button>' : `<a class="btn small primary" href="/api/drive/connect" ${s.drive.configured ? '' : 'aria-disabled="true"'}>Link Google Drive</a>`}</div>
+    <div class="card"><h2>Reminders on this phone</h2><div data-push><p class="note" style="margin-top:0">Checking…</p></div></div>
     <div class="card"><h2>Reading IDs</h2>${idReadingHtml(s.idReading)}</div>
     <div class="card"><div class="card-h"><h2>${GUARD}’s phone</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
       <p class="note" style="margin-top:0">${GUARD}’s phone signs in with a one-time code, no Gmail needed. It sees only rent status and Add ID.</p>
@@ -974,6 +1122,7 @@ async function viewMenu() {
     <a class="btn block" href="/auth/logout">Sign out</a>`,
     'menu'
   );
+  renderPushCard();
   const loadDevices = async () => {
     const box = $app.querySelector('[data-devices]');
     if (!box) return;
@@ -1349,6 +1498,7 @@ async function render() {
     if (route === 'units') return await viewUnits();
     if (route === 'unit' && arg) return await viewUnit(decodeURIComponent(arg));
     if (route === 'payments') return await viewPayments();
+    if (route === 'send') return await viewSend();
     if (route === 'menu') return await viewMenu();
     if (route === 'security') return await viewSecurity();
     return await viewHome();
@@ -1368,6 +1518,7 @@ window.addEventListener('hashchange', render);
     return;
   }
   if (!lang) lang = me.role === 'owner' ? 'en' : 'ne';
+  if (me.role === 'owner' && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   document.documentElement.lang = me.role === 'owner' ? 'en' : lang;
   await render();
   // Keep the guard's screen fresh if it stays open.

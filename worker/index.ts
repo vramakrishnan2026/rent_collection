@@ -30,6 +30,7 @@ import { WEBHOOK_PATH, handleWebhook, linkForTenancy, markSent, razorpayStatus, 
 import { todayIST } from './rent.ts';
 import { PAIR_PATH, cancelCodes, createPairCode, currentDevice, handlePair, listDevices, removeDevice } from './devices.ts';
 import { lastRead } from './idread.ts';
+import { collectQueue, pushKey, rentReminders, subscribe, unsubscribe, notifyOwners } from './collect.ts';
 import { attachUpload, attachWaiting, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
 
 const json = (data: unknown, status = 200) =>
@@ -109,6 +110,21 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   if (pathname === '/api/drive/disconnect' && method === 'POST') {
     await drive.disconnect(env);
     return json({ success: true });
+  }
+
+  // "Send all" queue and reminders on this phone
+  if (pathname === '/api/collect' && method === 'GET') return json(await collectQueue(env, today));
+  if (pathname === '/api/push/key' && method === 'GET') return json(await pushKey(env));
+  if (pathname === '/api/push/subscribe' && method === 'POST') {
+    await subscribe(env, user.email, await readJson(request));
+    return json({ success: true });
+  }
+  if (pathname === '/api/push/unsubscribe' && method === 'POST') {
+    await unsubscribe(env, await readJson(request));
+    return json({ success: true });
+  }
+  if (pathname === '/api/push/test' && method === 'POST') {
+    return json(await notifyOwners(env, { title: 'Reminders are on', body: 'You’ll get a reminder on the 1st to send the rent links.', url: '/#/send', tag: 'test' }, url.origin));
   }
 
   // Security phones (paired with a one-time code, no Gmail)
@@ -272,9 +288,14 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
-      syncOpenLinks(env, env.DB)
-        .then((r) => console.log('Razorpay link check', r))
-        .catch((e) => console.error('Razorpay link check failed', e))
+      (async () => {
+        await syncOpenLinks(env, env.DB)
+          .then((r) => console.log('Razorpay link check', r))
+          .catch((e) => console.error('Razorpay link check failed', e));
+        await rentReminders(env, env.TEST_TODAY || todayIST())
+          .then((r) => console.log('Rent reminders', r))
+          .catch((e) => console.error('Rent reminders failed', e));
+      })()
     );
   },
 };

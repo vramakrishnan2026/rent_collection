@@ -20,6 +20,10 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - The refund is what's left.
   - Anything the deposit doesn't cover stays on the pending list.
 - **Rent links:** tap **Send link** to create a Razorpay Payment Link for every month that has ended and isn't paid (from the 1st, last month's rent can be collected). Then tap **WhatsApp** or **SMS** to send it from your phone, with the message ready. When the tenant pays, Razorpay's webhook records the payment. A 9 AM daily check catches anything the webhook missed.
+- **Send all (📤 Send links):** one screen that goes through every tenant who owes rent for a month that has ended.
+  - Tap **WhatsApp** and the chat opens with the message and link ready. Tap Send in WhatsApp and come back: the next tenant is ready. SMS is there for anyone without WhatsApp.
+  - It shows how many are sent this month, and lets you skip or resend.
+  - **Reminders:** in **Settings › Reminders on this phone**, turn on free phone notifications. You get "Rent links ready" at 9 AM on the 1st and, if any are left, a reminder on the 3rd. On iPhone, the app must be added to the Home Screen first.
 - **Dashboard:**
   - Collected this month (MTD) and this financial year (YTD, April to March)
   - Pending amount and how many tenants owe
@@ -107,6 +111,7 @@ Until Razorpay is connected, the Send link buttons show a message instead, and y
 - `worker/rent.ts`: the rent rules (due dates, 5% increases, oldest-first allocation, financial year)
 - `worker/db.ts`: units, tenancies, people, payments, the dashboard and Anita's rent-status view
 - `worker/razorpay.ts`: payment links, the WhatsApp/SMS message, the webhook (signature-checked) and the daily check
+- `worker/collect.ts`: the Send-all queue and the reminders on the 1st and 3rd (`worker/webpush.ts`: free web push, from the Finance Tracker)
 - `worker/devices.ts`: Anita's phone, paired with one-time codes (no Gmail)
 - `worker/idread.ts`: reads ID type, name and address off Indian ID cards (layout rules, fallbacks, ID-number scrubbing)
 - `worker/ids.ts`: Anita's Add ID uploads, name reading (Workers AI), matching to people, and attach/dismiss
