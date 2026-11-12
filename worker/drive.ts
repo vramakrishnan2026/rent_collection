@@ -9,8 +9,8 @@ import { todayIST } from './rent.ts';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const REFRESH_TOKEN_KEY = 'google_drive_refresh_token';
-const ROOT = 'Challaghatta Home';
-const IDS = 'Tenant IDs';
+export const ROOT = 'Challaghatta Home';
+export const IDS = 'Tenant IDs';
 const MAX_BYTES = 8 * 1024 * 1024;
 const TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
@@ -65,7 +65,7 @@ export async function disconnect(env: Env) {
   await setSetting(env.DB, REFRESH_TOKEN_KEY, null);
 }
 
-async function accessToken(env: Env) {
+export async function accessToken(env: Env) {
   if (!isConfigured(env)) throw new ValidationError('Google isn’t set up on the server');
   const refresh = await getSetting(env.DB, REFRESH_TOKEN_KEY);
   if (!refresh) throw new ValidationError('Link Google Drive first (☰ › Google Drive)');
@@ -88,7 +88,7 @@ async function driveFetch(token: string, url: string, init: RequestInit = {}) {
 
 const q = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-async function ensureFolder(token: string, name: string, parentId?: string): Promise<string> {
+export async function ensureFolder(token: string, name: string, parentId?: string): Promise<string> {
   let query = `name = '${q(name)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
   if (parentId) query += ` and '${q(parentId)}' in parents`;
   const found = await driveFetch(token, `https://www.googleapis.com/drive/v3/files?${new URLSearchParams({ q: query, fields: 'files(id)', orderBy: 'createdTime' })}`);
@@ -101,7 +101,7 @@ async function ensureFolder(token: string, name: string, parentId?: string): Pro
   return created.id;
 }
 
-async function uploadFile(token: string, meta: { name: string; mimeType: string; parents: string[] }, content: Blob) {
+export async function uploadFile(token: string, meta: { name: string; mimeType: string; parents: string[] }, content: Blob) {
   const boundary = 'cr' + crypto.randomUUID().replace(/-/g, '');
   const body = new Blob([
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n`,
@@ -124,7 +124,7 @@ async function trashFile(token: string, fileId: string) {
   });
 }
 
-const safeName = (s: string) => s.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+export const safeName = (s: string) => s.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
 
 /** Saves one person's ID photo (or PDF) to Drive, replacing their previous one. */
 export async function uploadIdPhoto(env: Env, personId: string, request: Request) {

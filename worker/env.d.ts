@@ -32,9 +32,14 @@ export interface ScheduledController {
   scheduledTime: number;
 }
 
+export interface Ai {
+  run(model: string, inputs: Record<string, unknown>): Promise<any>;
+}
+
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  AI?: Ai; // Cloudflare Workers AI: reads the name off tenant ID photos
 
   // Google sign-in (and Google Drive for tenant ID photos)
   GOOGLE_CLIENT_ID?: string;

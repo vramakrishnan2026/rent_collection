@@ -202,6 +202,7 @@ async function viewHome() {
   const banners = [];
   if (!s.razorpay.configured) banners.push('Razorpay isn’t connected yet, so rent links are off. You can still record payments by hand.');
   else if (s.razorpay.mode === 'test') banners.push('Razorpay is in <b>test mode</b>: links take test payments only.' + (d.collected.testTotal ? ` ${inr(d.collected.testTotal)} of test payments are counted (clear them in Settings).` : ''));
+  if (d.idsWaiting?.length) banners.push(`📷 New ID photos from security to check: ${d.idsWaiting.map((w) => `<a href="#/unit/${esc(w.unit)}"><b>${esc(w.unit)}</b>${w.n > 1 ? ` (${w.n})` : ''}</a>`).join(', ')}`);
   const noTenants = d.occupied === 0 && !d.pending.length;
 
   headerExtra = `<a class="btn small" href="#/security">◉ Security view</a>`;
@@ -366,6 +367,21 @@ async function viewUnit(code) {
   const { unit, current: t, past } = d;
   headerExtra = `<a class="icon-btn" href="#/units" title="Back">←</a>`;
   let body = '<div class="unit-cols"><div class="ucol">';
+  if (d.waitingIds?.length) {
+    body += `<div class="card waiting"><div class="card-h"><h2>New IDs from security</h2><span class="chip upcoming">${d.waitingIds.length}</span></div><div class="list">${d.waitingIds
+      .map(
+        (w) => `<div class="row wrow"><div class="main"><div class="t">${w.names.length ? esc(w.names.join(', ')) : w.is_pdf ? 'PDF' : 'Name not read'}</div>
+          <div class="d">${fmtDate(w.taken_at)} · ${new Date(w.taken_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · by ${esc(w.uploaded_by)} ·
+          <a href="https://drive.google.com/file/d/${esc(w.drive_file_id)}/view" target="_blank" rel="noopener">Open</a></div>
+          ${t ? `<div class="wact"><select data-attach-sel="${esc(w.id)}"><option value="">Attach to…</option>${t.people
+              .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.drive_file_id ? ' (has ID)' : ''}</option>`)
+              .join('')}<option value="__new">＋ New person…</option></select>
+            <button class="btn small danger" data-dismiss="${esc(w.id)}">Dismiss</button></div>`
+            : `<div class="d">Add the tenant first, then attach this ID. <button class="btn small danger" data-dismiss="${esc(w.id)}">Dismiss</button></div>`}
+        </div></div>`
+      )
+      .join('')}</div></div>`;
+  }
 
   if (!t) {
     body += `<div class="card"><p style="margin-top:0">${unit.rent_free ? 'Rent-free unit. Add who lives here to keep their ID on file.' : 'No tenant right now.'}</p>
@@ -459,6 +475,33 @@ function wireUnit(d) {
   const { unit, current: t } = d;
   const reload = () => viewUnit(unit.code);
   const on = (sel, fn) => $app.querySelectorAll(sel).forEach((el) => el.addEventListener('click', (e) => fn(el, e)));
+
+  on('[data-dismiss]', async (el) => {
+    if (!confirm('Dismiss this ID photo? It stays in your Drive.')) return;
+    await api(`/api/id-uploads/${encodeURIComponent(el.dataset.dismiss)}/dismiss`, { method: 'POST', body: {} }).catch((e) => toast(e.message));
+    reload();
+  });
+  $app.querySelectorAll('[data-attach-sel]').forEach((sel) =>
+    sel.addEventListener('change', async () => {
+      const id = sel.dataset.attachSel;
+      const w = d.waitingIds.find((x) => x.id === id);
+      let body;
+      if (sel.value === '__new') {
+        const name = prompt('Name of the person on this ID', w.names[0] || '');
+        if (!name) { sel.value = ''; return; }
+        body = { name };
+      } else if (sel.value) body = { person_id: sel.value };
+      else return;
+      try {
+        await api(`/api/id-uploads/${encodeURIComponent(id)}/attach`, { method: 'POST', body });
+        toast('ID attached');
+        reload();
+      } catch (e) {
+        toast(e.message);
+        sel.value = '';
+      }
+    })
+  );
 
   on('[data-act=add]', () =>
     openSheet(`<h2>New tenant · ${esc(unit.code)}</h2>${tenancyForm(null, unit.rent_free)}`, async (v) => {
@@ -690,48 +733,232 @@ async function viewMenu() {
   });
 }
 
-// ---------- security guard ----------
+// ---------- security guard: rent status + Add ID (English / Nepali) ----------
+// Nepali: please have it checked by a native speaker.
+
+const GT = {
+  en: {
+    status: 'Rent status', addId: 'Add ID',
+    pendingHead: (n) => `${n === 1 ? 'unit has' : 'units have'} rent pending.<br>Remind the tenant.`,
+    allPaid: 'All rent is paid.', remind: 'Remind tenant', month: 'month', months: 'months', floor: 'floor',
+    paid: 'Paid ✓', vacant: 'Vacant', free: 'Rent-free', upcoming: 'Moving in', signOut: 'Sign out', updated: 'Updated',
+    whichUnit: 'Which unit is the ID for?', change: 'Change', empty: 'Empty',
+    intro: 'Take a clear photo of each person’s ID, front and back. Check it, then tap Submit.',
+    take: 'Take photo', gallery: 'Choose photo or PDF', tips: 'Tips: lay the ID flat, fill the frame, avoid glare.',
+    review: 'Check the photo', reviewHint: 'Is the ID clear and the name easy to read?',
+    retake: 'Retake', submit: 'Submit', lockNote: 'After you submit, the ID can’t be changed or deleted.',
+    submitted: 'Submitted', uploading: 'Submitting…', saved: 'Saved', nameRead: 'Name', noName: 'Name not read. That’s OK, it’s saved.',
+    failed: 'Failed. Tap to try again', driveMissing: 'Google Drive isn’t linked yet. Please tell the owner.', none: 'Nothing submitted yet.',
+  },
+  ne: {
+    status: 'भाडाको स्थिति', addId: 'परिचयपत्र थप्नुहोस्',
+    pendingHead: (n) => `वटा कोठाको भाडा बाँकी छ।<br>भाडावाललाई सम्झाउनुहोस्।`,
+    allPaid: 'सबै भाडा तिरिएको छ।', remind: 'भाडावाललाई सम्झाउनुहोस्', month: 'महिना', months: 'महिना', floor: 'तल्ला',
+    paid: 'तिरेको ✓', vacant: 'खाली', free: 'भाडा छैन', upcoming: 'सर्दैछन्', signOut: 'साइन आउट', updated: 'अपडेट भयो',
+    whichUnit: 'परिचयपत्र कुन कोठाको हो?', change: 'बदल्नुहोस्', empty: 'खाली',
+    intro: 'हरेक व्यक्तिको परिचयपत्रको अगाडि र पछाडि स्पष्ट फोटो खिच्नुहोस्। जाँच गरेर Submit थिच्नुहोस्।',
+    take: 'फोटो खिच्नुहोस्', gallery: 'फोटो वा PDF छान्नुहोस्', tips: 'सुझाव: परिचयपत्रलाई समतल राख्नुहोस्, पूरै फ्रेममा देखाउनुहोस्, चमक नपरोस्।',
+    review: 'फोटो जाँच गर्नुहोस्', reviewHint: 'परिचयपत्र स्पष्ट छ र नाम पढ्न सकिन्छ?',
+    retake: 'फेरि खिच्नुहोस्', submit: 'पठाउनुहोस्', lockNote: 'पठाएपछि परिचयपत्र बदल्न वा मेटाउन सकिँदैन।',
+    submitted: 'पठाइएका', uploading: 'पठाउँदै…', saved: 'सुरक्षित भयो', nameRead: 'नाम', noName: 'नाम पढ्न सकिएन। ठीक छ, फोटो सुरक्षित भयो।',
+    failed: 'असफल भयो। फेरि प्रयास गर्न थिच्नुहोस्', driveMissing: 'Google Drive अझै जोडिएको छैन। कृपया मालिकलाई भन्नुहोस्।', none: 'अहिलेसम्म केही पठाइएको छैन।',
+  },
+};
+const store = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
+};
+let lang = store.get('cr-lang') === 'ne' ? 'ne' : 'en';
+const gt = () => GT[lang];
+
+function guardHeader(active) {
+  const back = me.role === 'owner' ? '<a class="icon-btn" href="#/home" title="Back">←</a>' : '';
+  headerExtra = `${back}<div class="langs" role="radiogroup" aria-label="Language / भाषा">
+      <button role="radio" aria-checked="${lang === 'en'}" data-lang="en">English</button>
+      <button role="radio" aria-checked="${lang === 'ne'}" data-lang="ne" lang="ne">नेपाली</button></div>`;
+  return `<div class="seg"><a href="#/security" class="${active === 'status' ? 'on' : ''}">${gt().status}</a><a href="#/ids" class="${active === 'ids' ? 'on' : ''}">📷 ${gt().addId}</a></div>`;
+}
+function wireLang(again) {
+  $app.querySelectorAll('[data-lang]').forEach((b) =>
+    b.addEventListener('click', () => {
+      lang = b.dataset.lang;
+      store.set('cr-lang', lang);
+      document.documentElement.lang = lang;
+      again();
+    })
+  );
+}
 
 async function viewSecurity() {
   const d = await api('/api/security');
+  const T = gt();
   const pending = d.units.filter((u) => u.status === 'pending').sort((a, b) => b.months - a.months);
-  const label = (u) =>
-    u.status === 'paid' ? '<span class="chip paid">Paid ✓</span>' : `<span class="chip ${u.status}">${STATUS[u.status]}</span>`;
-  const floors = [];
-  for (const u of d.units) {
-    let f = floors.find((x) => x.name === u.floor);
-    if (!f) floors.push((f = { name: u.floor, units: [] }));
-    f.units.push(u);
-  }
-  headerExtra = `${me.role === 'owner' ? '<a class="icon-btn" href="#/menu" title="Back">←</a>' : ''}<button class="icon-btn" data-reload title="Refresh">↻</button>`;
+  const mo = (n) => `<div class="months">${n}<small>${n === 1 ? T.month : T.months}</small></div>`;
+  const label = (u) => `<span class="chip ${u.status}">${{ paid: T.paid, vacant: T.vacant, free: T.free, upcoming: T.upcoming }[u.status] || ''}</span>`;
+  const top = guardHeader('status');
+  headerExtra += '<button class="icon-btn" data-reload title="Refresh">↻</button>';
   shell(
-    'Rent status',
+    T.status,
     `Challaghatta Home · ${fmtDate(d.today)}`,
-    `${pending.length
-      ? `<div class="sec-head red"><div class="big">${pending.length}</div><div class="txt">${pending.length === 1 ? 'unit has' : 'units have'} rent pending.<br>Remind the tenant.</div></div>`
-      : `<div class="sec-head green"><div class="big">✓</div><div class="txt">All rent is paid.</div></div>`}
+    `${top}${pending.length
+      ? `<div class="sec-head red"><div class="big">${pending.length}</div><div class="txt">${T.pendingHead(pending.length)}</div></div>`
+      : `<div class="sec-head green"><div class="big">✓</div><div class="txt">${T.allPaid}</div></div>`}
     <div class="sec-pend">${pending
       .map(
         (u) => `<div class="sec-row pending"><span class="code">${esc(u.code)}</span>
-        <div class="main" style="flex:1"><div class="t">${esc(u.name || '')}</div><div class="act">⚠ ${esc(u.action)}</div></div>
-        <div class="months">${u.months}<small>${u.months === 1 ? 'month' : 'months'}</small></div></div>`
+        <div class="main" style="flex:1"><div class="t">${esc(u.name || '')}</div><div class="act">⚠ ${T.remind}</div></div>${mo(u.months)}</div>`
       )
       .join('')}</div>
-    <div class="sec-grid">${floors
+    <div class="sec-grid">${byFloor(d.units)
       .map(
-        (f) => `<div><h2 class="sec">${esc(f.name)} floor</h2>${f.units
+        (f) => `<div><h2 class="sec">${esc(f.name)} ${T.floor}</h2>${f.units
           .map(
             (u) => `<div class="sec-row ${u.status === 'pending' ? 'pending' : ''}"><span class="code">${esc(u.code)}</span>
-            <div style="flex:1"><div class="t">${esc(u.name || '')}</div></div>
-            ${u.status === 'pending' ? `<div class="months">${u.months}<small>${u.months === 1 ? 'month' : 'months'}</small></div>` : label(u)}</div>`
+            <div style="flex:1"><div class="t">${esc(u.name || '')}</div></div>${u.status === 'pending' ? mo(u.months) : label(u)}</div>`
           )
           .join('')}</div>`
       )
       .join('')}</div>
-    ${me.role === 'owner' ? '' : '<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">Sign out</a>'}`,
+    ${me.role === 'owner' ? '' : `<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">${T.signOut}</a>`}`,
     'security'
   );
-  $app.querySelector('[data-reload]').addEventListener('click', () => viewSecurity().then(() => toast('Updated')));
+  wireLang(viewSecurity);
+  $app.querySelector('[data-reload]').addEventListener('click', () => viewSecurity().then(() => toast(gt().updated)));
+}
+
+// --- Add ID: pick unit → photo → review → Submit (one way: no delete afterwards)
+
+let idUnit = (() => { try { return sessionStorage.getItem('cr-id-unit'); } catch { return null; } })();
+const setIdUnit = (u) => { idUnit = u; try { u ? sessionStorage.setItem('cr-id-unit', u) : sessionStorage.removeItem('cr-id-unit'); } catch {} };
+let idDraft = null; // { file, url, isPdf, takenAt } waiting for review
+const idSent = [];   // this visit's submissions (read-only)
+
+async function preparePhoto(file) {
+  const img = await createImageBitmap(file);
+  const draw = (max) => {
+    const s = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * s);
+    c.height = Math.round(img.height * s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c;
+  };
+  const photo = await new Promise((r) => draw(2000).toBlob(r, 'image/jpeg', 0.85));
+  const preview = draw(1280).toDataURL('image/jpeg', 0.85).replace(/^data:image\/jpeg;base64,/, '');
+  const thumb = draw(200).toDataURL('image/jpeg', 0.6);
+  img.close?.();
+  return { photo, preview, thumb };
+}
+
+async function viewIds() {
+  const d = await api('/api/security');
+  const T = gt();
+  const top = guardHeader('ids');
+  const unit = d.units.find((u) => u.code === idUnit);
+  let body;
+  if (!unit) {
+    body = `<h2 class="pick-h">${T.whichUnit}</h2>${byFloor(d.units)
+      .map(
+        (f) => `<h2 class="sec">${esc(f.name)} ${T.floor}</h2><div class="grid">${f.units
+          .map((u) => `<button class="tile pick" data-unit="${esc(u.code)}"><div class="c">${esc(u.code)}</div><div class="n">${esc(u.name || T.empty)}</div></button>`)
+          .join('')}</div>`
+      )
+      .join('')}`;
+  } else if (idDraft) {
+    body = `<div class="unitbar"><span>⌂ ${esc(unit.code)}${unit.name ? ` · ${esc(unit.name)}` : ''}</span></div>
+      <div class="card review"><h2>${T.review}</h2>
+        ${idDraft.isPdf ? `<div class="pdfbox">📄 ${esc(idDraft.file.name)}</div>` : `<img src="${idDraft.url}" alt="">`}
+        <p class="note">${T.reviewHint}</p>
+        <div class="actions"><button class="btn" data-retake>${T.retake}</button><button class="btn green" data-submit>${T.submit}</button></div>
+        <p class="note lock">🔒 ${T.lockNote}</p></div>`;
+  } else {
+    body = `<div class="unitbar"><span>⌂ ${esc(unit.code)}${unit.name ? ` · ${esc(unit.name)}` : ''}</span><button class="btn small" data-change>${T.change}</button></div>
+      <p class="note" style="font-size:.95rem">${T.intro}</p>
+      <button class="btn green block big-btn" data-camera>📷 ${T.take}</button>
+      <button class="btn block" data-gallery style="margin-top:.6rem">${T.gallery}</button>
+      <p class="note">${T.tips}</p>
+      <input type="file" accept="image/*" capture="environment" data-file="camera" hidden>
+      <input type="file" accept="image/*,application/pdf,.pdf" data-file="gallery" hidden>`;
+  }
+  body += `<h2 class="sec">${T.submitted}</h2><div class="card"><div class="list">${
+    idSent.length
+      ? idSent
+          .map(
+            (s, i) => `<div class="row" ${s.status === 'failed' ? `data-retry="${i}" style="cursor:pointer"` : ''}>
+            ${s.thumb ? `<img class="thumb" src="${s.thumb}" alt="">` : '<span class="code">📄</span>'}
+            <div class="main"><div class="t">${esc(s.unit)} · ${new Date(s.at).toLocaleTimeString(lang === 'ne' ? 'ne-NP' : 'en-IN', { hour: '2-digit', minute: '2-digit' })}</div>
+            <div class="d">${
+              s.status === 'uploading' ? T.uploading
+              : s.status === 'failed' ? `<span style="color:var(--red)">${s.drive ? T.driveMissing : T.failed}</span>`
+              : s.names.length ? `${T.nameRead}: <b>${esc(s.names.join(', '))}</b>` : s.isPdf ? T.saved : T.noName
+            }</div></div>
+            ${s.status === 'saved' ? '<span class="chip paid">✓</span>' : ''}</div>`
+          )
+          .join('')
+      : `<p class="note">${T.none}</p>`
+  }</div></div>
+  ${me.role === 'owner' ? '' : `<a class="btn block" href="/auth/logout" style="margin-top:1.5rem">${T.signOut}</a>`}`;
+  shell(T.addId, `Challaghatta Home`, top + body, 'security');
+  wireLang(viewIds);
+
+  $app.querySelectorAll('[data-unit]').forEach((b) => b.addEventListener('click', () => { setIdUnit(b.dataset.unit); viewIds(); }));
+  $app.querySelector('[data-change]')?.addEventListener('click', () => { setIdUnit(null); viewIds(); });
+  $app.querySelector('[data-camera]')?.addEventListener('click', () => $app.querySelector('[data-file=camera]').click());
+  $app.querySelector('[data-gallery]')?.addEventListener('click', () => $app.querySelector('[data-file=gallery]').click());
+  $app.querySelectorAll('[data-file]').forEach((input) =>
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const now = Date.now();
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      idDraft = { file, isPdf, url: isPdf ? '' : URL.createObjectURL(file), takenAt: new Date(file.lastModified && file.lastModified <= now ? file.lastModified : now).toISOString() };
+      viewIds();
+    })
+  );
+  $app.querySelector('[data-retake]')?.addEventListener('click', () => {
+    if (idDraft?.url) URL.revokeObjectURL(idDraft.url);
+    idDraft = null;
+    viewIds();
+  });
+  $app.querySelector('[data-submit]')?.addEventListener('click', () => {
+    const draft = idDraft;
+    idDraft = null;
+    const item = { unit: idUnit, at: Date.now(), draft, isPdf: draft.isPdf, status: 'uploading', names: [], thumb: draft.isPdf ? '' : draft.url };
+    idSent.unshift(item);
+    viewIds();
+    sendId(item);
+  });
+  $app.querySelectorAll('[data-retry]').forEach((r) => r.addEventListener('click', () => sendId(idSent[Number(r.dataset.retry)])));
+}
+
+async function sendId(item) {
+  item.status = 'uploading';
+  const redraw = () => location.hash.startsWith('#/ids') && viewIds().catch(() => {});
+  redraw();
+  try {
+    const form = new FormData();
+    form.append('unit', item.unit);
+    form.append('takenAt', item.draft.takenAt);
+    if (item.draft.isPdf) form.append('photo', item.draft.file, 'id.pdf');
+    else {
+      const p = item.prepared || (item.prepared = await preparePhoto(item.draft.file).catch(() => ({ photo: item.draft.file, preview: null, thumb: '' })));
+      if (p.thumb) item.thumb = p.thumb;
+      form.append('photo', p.photo, 'id.jpg');
+      if (p.preview) form.append('preview', p.preview);
+    }
+    const res = await fetch('/api/id-uploads', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      item.drive = data.error === 'drive_not_linked';
+      throw new Error(data.message || data.error || 'failed');
+    }
+    item.status = 'saved';
+    item.names = data.names || [];
+    item.draft = null; // locked: nothing kept to resend or change
+  } catch {
+    item.status = 'failed';
+  }
+  redraw();
 }
 
 // ---------- routing ----------
@@ -745,6 +972,7 @@ async function render() {
   closeSheet();
   const [route, arg] = location.hash.replace(/^#\/?/, '').split('/');
   try {
+    if (route === 'ids') return await viewIds();
     if (me.role !== 'owner') return await viewSecurity();
     if (route === 'units') return await viewUnits();
     if (route === 'unit' && arg) return await viewUnit(decodeURIComponent(arg));

@@ -250,5 +250,96 @@ await test('move-out and deposit refund', async () => {
   assert.equal(units.body.units.find((u) => u.code === 'G1').status, 'vacant');
 });
 
+// --- ID photos from the security guard, with Google Drive and the AI faked
+console.log('ID photos');
+let aiNames = [];
+env.AI = { run: async (_m, input) => (input.prompt === 'agree' ? {} : { response: JSON.stringify({ names: aiNames }) }) };
+let fileNo = 0;
+const driveCalls = [];
+globalThis.fetch = async (input, init = {}) => {
+  const u = String(input);
+  if (u.startsWith('https://oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok' });
+  if (u.startsWith('https://www.googleapis.com/drive/v3/files?') && (init.method || 'GET') === 'GET') return Response.json({ files: [] });
+  if (u.startsWith('https://www.googleapis.com/drive/v3/files')) return Response.json({ id: 'folder' });
+  if (u.startsWith('https://www.googleapis.com/upload/drive/v3/files')) {
+    driveCalls.push(u);
+    return Response.json({ id: `file${++fileNo}` });
+  }
+  return realFetch(input, init);
+};
+const upload = async (unit, cookie = guard) => {
+  const form = new FormData();
+  form.append('unit', unit);
+  form.append('photo', new Blob([new Uint8Array(5000)], { type: 'image/jpeg' }), 'id.jpg');
+  form.append('preview', 'x'.repeat(500));
+  form.append('takenAt', new Date().toISOString());
+  const res = await worker.fetch(new Request(BASE + '/api/id-uploads', { method: 'POST', headers: { Cookie: cookie }, body: form }), env);
+  return { status: res.status, body: await res.json() };
+};
+
+await test('names must match in full: a shared first name is not enough', async () => {
+  const { bestMatch } = await import('../worker/ids.ts');
+  const people = [{ id: 'a', name: 'Suresh Gowda' }, { id: 'b', name: 'Karthik R' }, { id: 'c', name: 'Asha Rao' }];
+  assert.equal(bestMatch('Suresh Kumar', people), null);
+  assert.equal(bestMatch('SURESH GOWDA', people), 'a');
+  assert.equal(bestMatch('Karthik Ramesh', people), 'b');
+  assert.equal(bestMatch('Asha Rao Shetty', people), 'c');
+  assert.equal(bestMatch('Rao', [{ id: 'x', name: 'Asha Rao' }, { id: 'y', name: 'Mohan Rao' }]), null);
+});
+await test('nothing uploads until Google Drive is linked', async () => {
+  const r = await upload('G2');
+  assert.equal(r.status, 503);
+  assert.equal(r.body.error, 'drive_not_linked');
+});
+await DB.prepare("INSERT INTO settings (key, value) VALUES ('google_drive_refresh_token', 'r')").run();
+let g2;
+await test('guard’s photo is attached to the matching person automatically', async () => {
+  g2 = (await call('/api/tenancies', { method: 'POST', body: { unit_code: 'G2', contact_name: 'Asha Rao', whatsapp: '9876543210', start_date: start, base_rent: 10000, people: [{ name: 'Asha Rao' }, { name: 'Mohan Rao' }] } })).body.id;
+  aiNames = ['ASHA RAO'];
+  const r = await upload('G2');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.names, ['Asha Rao']);
+  assert.equal(r.body.matched, 1);
+  const { body } = await call('/api/units/G2');
+  assert.equal(body.current.people.find((p) => p.name === 'Asha Rao').drive_file_id, 'file1');
+  assert.equal(body.current.people.find((p) => p.name === 'Mohan Rao').drive_file_id, null);
+  assert.equal(body.waitingIds.length, 0);
+});
+await test('an unknown name waits for the owner, who adds them as a new person', async () => {
+  aiNames = ['Kiran Shetty'];
+  assert.equal((await upload('G2')).body.matched, 0);
+  const { body } = await call('/api/units/G2');
+  assert.equal(body.waitingIds.length, 1);
+  assert.deepEqual(body.waitingIds[0].names, ['Kiran Shetty']);
+  assert.deepEqual((await call('/api/dashboard')).body.idsWaiting, [{ unit: 'G2', n: 1 }]);
+  const r = await call(`/api/id-uploads/${body.waitingIds[0].id}/attach`, { method: 'POST', body: { name: 'Kiran Shetty' } });
+  assert.equal(r.status, 200);
+  const after = (await call('/api/units/G2')).body;
+  assert.equal(after.waitingIds.length, 0);
+  assert.equal(after.current.people.find((p) => p.name === 'Kiran Shetty').drive_file_id, 'file2');
+});
+await test('a photo whose name can’t be read can be attached to someone listed', async () => {
+  aiNames = [];
+  await upload('G2');
+  const w = (await call('/api/units/G2')).body.waitingIds[0];
+  assert.ok(w.file_name.includes('Name not read'));
+  const mohan = (await call('/api/units/G2')).body.current.people.find((p) => p.name === 'Mohan Rao');
+  assert.equal((await call(`/api/id-uploads/${w.id}/attach`, { method: 'POST', body: { person_id: mohan.id } })).status, 200);
+  assert.equal((await call('/api/units/G2')).body.current.people.find((p) => p.name === 'Mohan Rao').drive_file_id, 'file3');
+});
+await test('IDs for an empty unit wait until the tenant is added; they can be dismissed', async () => {
+  aiNames = ['New Person'];
+  await upload('G3');
+  const w = (await call('/api/units/G3')).body.waitingIds[0];
+  assert.equal((await call(`/api/id-uploads/${w.id}/attach`, { method: 'POST', body: { name: 'New Person' } })).status, 400);
+  assert.equal((await call(`/api/id-uploads/${w.id}/dismiss`, { method: 'POST', body: {} })).status, 200);
+  assert.equal((await call('/api/units/G3')).body.waitingIds.length, 0);
+});
+await test('the guard can upload but not attach, dismiss or see IDs', async () => {
+  assert.equal((await call('/api/units/G2', { cookie: guard })).status, 403);
+  assert.equal((await call('/api/id-uploads/x/dismiss', { cookie: guard, method: 'POST', body: {} })).status, 403);
+  assert.equal((await upload('ZZ9')).status, 400);
+});
+
 globalThis.fetch = realFetch;
 console.log(`\n${passed} passed`);

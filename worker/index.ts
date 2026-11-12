@@ -27,6 +27,7 @@ import {
 import * as drive from './drive.ts';
 import { WEBHOOK_PATH, handleWebhook, linkForTenancy, markSent, razorpayStatus, refreshLink, syncOpenLinks } from './razorpay.ts';
 import { todayIST } from './rent.ts';
+import { attachUpload, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -70,6 +71,12 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   // The security guard's screen (owners can open it too).
   if (pathname === '/api/security' && method === 'GET') return json(await securityView(env.DB, today));
 
+  // "Add ID" screen: the security guard and owners can photograph tenant IDs.
+  if (pathname === '/api/id-uploads' && method === 'POST') {
+    const { status, body } = await handleIdUpload(request, env, user.email);
+    return json(body, status);
+  }
+
   if (user.role !== 'owner') return error('Not allowed', 403);
 
   // ---- Google Drive link for tenant IDs
@@ -97,7 +104,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   if (pathname === '/api/settings' && method === 'GET') {
     return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env) });
   }
-  if (pathname === '/api/dashboard' && method === 'GET') return json(await dashboard(env.DB, today));
+  if (pathname === '/api/dashboard' && method === 'GET') return json({ ...(await dashboard(env.DB, today)), idsWaiting: await waitingByUnit(env) });
   if (pathname === '/api/units' && method === 'GET') {
     const { units, former } = await overview(env.DB, today);
     return json({ today, units, former });
@@ -117,7 +124,10 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   const [resource, id, action] = seg;
 
   if (resource === 'units' && id) {
-    if (seg.length === 2 && method === 'GET') return json(await unitDetail(env.DB, id.toUpperCase(), today));
+    if (seg.length === 2 && method === 'GET') {
+      const code = id.toUpperCase();
+      return json({ ...(await unitDetail(env.DB, code, today)), waitingIds: await waitingIds(env, code) });
+    }
     if (seg.length === 2 && method === 'PUT') {
       await updateUnit(env.DB, id.toUpperCase(), await readJson(request));
       return json({ success: true });
@@ -154,6 +164,13 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
       return json({ success: true });
     }
     if (seg.length === 3 && action === 'id' && method === 'POST') return json({ success: true, ...(await drive.uploadIdPhoto(env, id, request)) });
+  }
+
+  if (resource === 'id-uploads' && id && seg.length === 3 && method === 'POST') {
+    if (action === 'attach') await attachUpload(env, id, await readJson(request));
+    else if (action === 'dismiss') await dismissUpload(env, id);
+    else return error('Not found', 404);
+    return json({ success: true });
   }
 
   if (resource === 'links' && id && seg.length === 3 && method === 'POST') {

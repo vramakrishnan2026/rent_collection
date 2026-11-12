@@ -28,6 +28,9 @@
     }
   ],
 
+  // Cloudflare Workers AI: reads the name off tenant ID photos (free daily allowance).
+  "ai": { "binding": "AI" },
+
   // 9:00 AM India time every day: checks Razorpay for any payment the webhook missed.
   "triggers": { "crons": ["30 3 * * *"] },
 
