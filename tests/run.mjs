@@ -66,6 +66,16 @@ await test('before move-in nothing is due; paying ahead shows as credit', () => 
   assert.equal(a.outstanding, -16000);
   assert.equal(a.pendingMonths, 0);
 });
+await test('existing tenant: backdated move-in, charged from the coming month, owner-set increase', () => {
+  const t = { start_date: '2023-03-15', end_date: null, base_rent: 11000, bill_from: '2026-12-01', next_increase_on: '2027-04-01' };
+  const now = buildLedger(t, 0, '2026-11-12');
+  assert.deepEqual([now.periods.length, now.totalDue, now.pendingMonths], [1, 0, 0]); // only December, not yet due
+  assert.deepEqual([now.nextDueDate, now.nextRent, now.currentRent], ['2027-01-10', 11000, 11000]);
+  assert.deepEqual([now.nextIncreaseOn, now.nextIncreaseRent], ['2027-04-01', 11550]);
+  const later = buildLedger(t, 0, '2027-05-15');
+  assert.deepEqual(later.periods.map((p) => [p.month, p.rent]), [['2026-12', 11000], ['2027-01', 11000], ['2027-02', 11000], ['2027-03', 11000], ['2027-04', 11550], ['2027-05', 11550]]);
+  assert.equal(later.nextIncreaseOn, '2028-03-01'); // then every 11 months
+});
 await test('financial year runs April to March', () => {
   assert.deepEqual(financialYear('2026-11-12'), ['2026-04-01', '2027-03-31']);
   assert.deepEqual(financialYear('2027-02-01'), ['2026-04-01', '2027-03-31']);
@@ -173,6 +183,16 @@ await test('rent-free unit for the security guard', async () => {
   const { body } = await call('/api/security', { cookie: guard });
   assert.equal(body.units.find((u) => u.code === 'T6').status, 'free');
 });
+await test('adding a tenant who was already living here', async () => {
+  const r = await call('/api/tenancies', { method: 'POST', body: { unit_code: 'S5', contact_name: 'Old Tenant', start_date: '2023-03-15', base_rent: 11000, deposit: 30000, existing: true, bill_from: '2026-12-01', next_increase_on: '2027-04-01' } });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const { body } = await call('/api/units/S5');
+  assert.deepEqual([body.current.start_date, body.current.bill_from, body.current.outstanding, body.current.periods.length], ['2023-03-15', '2026-12-01', 0, 1]);
+  const sec = (await call('/api/security', { cookie: guard })).body.units.find((u) => u.code === 'S5');
+  assert.equal(sec.status, 'paid');
+  const bad = await call('/api/tenancies', { method: 'POST', body: { unit_code: 'S6', contact_name: 'X', start_date: '2023-03-15', base_rent: 1, existing: true, bill_from: '2026-12-01', next_increase_on: '2022-01-01' } });
+  assert.equal(bad.status, 400);
+});
 await test('new units can be added', async () => {
   assert.equal((await call('/api/units', { method: 'POST', body: { code: 'g7', floor: 'Ground' } })).status, 201);
   assert.equal((await call('/api/units', { method: 'POST', body: { code: 'G7', floor: 'Ground' } })).status, 400);
@@ -186,9 +206,9 @@ await test('dashboard: collected this month and year, pending, deposits', async 
   assert.equal(body.collected.ytd, 30000);
   assert.equal(body.pendingTotal, 2000);
   assert.equal(body.pendingUnits, 1);
-  assert.equal(body.depositsHeld, 50000);
+  assert.equal(body.depositsHeld, 80000); // G1 50,000 + S5 30,000
   assert.equal(body.rentableUnits, 24);
-  assert.equal(body.occupied, 1);
+  assert.equal(body.occupied, 2);
   assert.equal(body.pending[0].unit, 'G1');
   assert.equal(body.pending[0].months, 1);
 });
@@ -274,7 +294,7 @@ await test('move-out: last part month, one month kept for maintenance, rest refu
   const r = await call(`/api/tenancies/${tid}/settle`, { method: 'POST', body: { maintenance: 12000, date: today } });
   assert.deepEqual([r.body.fromDeposit, r.body.refund], [6800, 31200]);
   d = (await call('/api/dashboard')).body;
-  assert.equal(d.depositsHeld, 0);
+  assert.equal(d.depositsHeld, 30000); // only S5's now
   assert.equal(d.pending.length, 0, 'the rent was taken from the deposit');
   assert.equal((await call(`/api/tenancies/${tid}/settle`, { method: 'POST', body: { maintenance: 0, date: today } })).status, 400);
   const units = await call('/api/units');

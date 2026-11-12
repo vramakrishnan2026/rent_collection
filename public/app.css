@@ -291,3 +291,5 @@ details.guide > a.btn.block { width: calc(100% - 2.2rem); }
 .settle .total { border-top: 1px solid var(--line); padding-top: .55rem; font-size: 1.05rem; }
 .settle .chk { font-size: .85rem; display: flex; gap: .5rem; align-items: center; }
 .btn.danger-fill { background: var(--red); border-color: var(--red); color: #fff; }
+.chk.existing { display: flex; gap: .5rem; align-items: center; font-weight: 700; font-size: .9rem; margin: 0 0 .8rem; }
+.existing-box { background: var(--soft); border-radius: .9rem; padding: .8rem .9rem .2rem; margin-bottom: .9rem; }

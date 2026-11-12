@@ -63,7 +63,25 @@ export function rentForPeriod(baseRent: number, k: number): number {
 export interface TenancyTerms {
   start_date: string;
   end_date: string | null; // last day stayed (inclusive)
-  base_rent: number;
+  base_rent: number; // rent when charging starts (the current rent, for tenants who were here before the app)
+  bill_from?: string | null; // tenants who were here before the app: charge only from this date
+  next_increase_on?: string | null; // owner-entered date of the next 5% increase (then every 11 months)
+}
+
+/** First day rent is charged: the move-in date, or later for tenants who were here before the app. */
+export const chargeStart = (t: TenancyTerms) => (t.bill_from && t.bill_from > t.start_date ? t.bill_from : t.start_date);
+
+/** The date the n-th 5% increase starts (n = 1, 2, ...) for this tenancy. */
+export function increaseOn(t: TenancyTerms, n: number): string {
+  if (t.next_increase_on) return firstOnOrAfter(addMonths(t.next_increase_on, ESCALATION_EVERY_MONTHS * (n - 1)));
+  return increaseDate(t.start_date, n);
+}
+
+/** Monthly rent in force on a date for this tenancy. */
+export function tenancyRate(t: TenancyTerms, date: string): number {
+  let rent = t.base_rent;
+  for (let n = 1; n < 200 && increaseOn(t, n) <= date; n++) rent = Math.round((rent * (100 + ESCALATION_PERCENT)) / 100);
+  return rent;
 }
 
 export interface Period {
@@ -78,7 +96,7 @@ export interface Period {
   ended: boolean;  // the month (or stay) is over, so it can be collected
   isDue: boolean;  // past the due date
   paid: number;
-  status: 'paid' | 'partial' | 'pending' | 'running' | 'to-collect';
+  status: 'paid' | 'partial' | 'pending' | 'running' | 'to-collect' | 'future';
 }
 
 export interface Ledger {
@@ -100,14 +118,15 @@ export interface Ledger {
 export function monthPeriods(t: TenancyTerms, untilDate: string) {
   const out: Omit<Period, 'ended' | 'isDue' | 'paid' | 'status'>[] = [];
   const lastDate = t.end_date && t.end_date < lastOf(untilDate) ? t.end_date : lastOf(untilDate);
-  for (let first = firstOf(t.start_date), i = 0; first <= lastDate && i < 1200; first = addMonths(first, 1), i++) {
-    const from = t.start_date > first ? t.start_date : first;
+  const begin = chargeStart(t);
+  for (let first = firstOf(begin), i = 0; first <= lastDate && i < 1200; first = addMonths(first, 1), i++) {
+    const from = begin > first ? begin : first;
     const monthLast = lastOf(first);
     const to = t.end_date && t.end_date < monthLast ? t.end_date : monthLast;
     if (to < from) break;
     const days = toDays(to) - toDays(from) + 1;
     const full = from === first && to === monthLast;
-    const rate = rateOn(t.base_rent, t.start_date, first);
+    const rate = tenancyRate(t, first);
     const rent = full ? rate : Math.min(rate, Math.round((rate * days) / DAY_DIVISOR));
     out.push({ month: first.slice(0, 7), from, to, days, full, rate, rent, due: `${addMonths(first, 1).slice(0, 8)}${pad(DUE_DAY)}` });
   }
@@ -116,8 +135,9 @@ export function monthPeriods(t: TenancyTerms, untilDate: string) {
 
 export function buildLedger(t: TenancyTerms, totalPaid: number, today: string): Ledger {
   const ended = Boolean(t.end_date && t.end_date < today);
-  // Up to this month while living there; the move-out month once they've left; the first month if not moved in yet.
-  const until = t.start_date > today ? t.start_date : ended ? t.end_date! : today;
+  // Up to this month while living there; the move-out month once they've left; the first charged month if it's still ahead.
+  const begin = chargeStart(t);
+  const until = begin > today ? begin : ended ? t.end_date! : today;
   let left = totalPaid;
   const periods: Period[] = monthPeriods(t, until).map((p) => {
     const paid = Math.max(0, Math.min(p.rent, left));
@@ -125,7 +145,7 @@ export function buildLedger(t: TenancyTerms, totalPaid: number, today: string): 
     const isDue = today > p.due;
     const over = p.to < today;
     const status: Period['status'] =
-      paid >= p.rent ? 'paid' : isDue ? (paid > 0 ? 'partial' : 'pending') : over ? 'to-collect' : 'running';
+      paid >= p.rent ? 'paid' : isDue ? (paid > 0 ? 'partial' : 'pending') : over ? 'to-collect' : p.from > today ? 'future' : 'running';
     return { ...p, ended: over, isDue, paid, status };
   });
   const totalDue = periods.filter((p) => p.isDue).reduce((s, p) => s + p.rent, 0);
@@ -134,14 +154,14 @@ export function buildLedger(t: TenancyTerms, totalPaid: number, today: string): 
 
   let nextIncreaseOn: string | null = null;
   for (let n = 1; n < 200; n++) {
-    const d = increaseDate(t.start_date, n);
+    const d = increaseOn(t, n);
     if (d > today) {
       nextIncreaseOn = d;
       break;
     }
   }
   if (ended || (nextIncreaseOn && t.end_date && nextIncreaseOn > t.end_date)) nextIncreaseOn = null;
-  const rateDate = ended ? t.end_date! : today < t.start_date ? t.start_date : today;
+  const rateDate = ended ? t.end_date! : today < begin ? begin : today;
 
   return {
     periods,
@@ -151,11 +171,11 @@ export function buildLedger(t: TenancyTerms, totalPaid: number, today: string): 
     pendingMonths: periods.filter((p) => p.isDue && p.paid < p.rent).length,
     collectable: periods.filter((p) => p.ended).reduce((s, p) => s + unpaid(p), 0),
     owedThroughEnd: periods.reduce((s, p) => s + unpaid(p), 0) - Math.max(0, left),
-    currentRent: rateOn(t.base_rent, t.start_date, rateDate),
+    currentRent: tenancyRate(t, rateDate),
     nextDueDate: next ? next.due : null,
     nextRent: next ? unpaid(next) : null,
     nextIncreaseOn,
-    nextIncreaseRent: nextIncreaseOn ? rateOn(t.base_rent, t.start_date, nextIncreaseOn) : null,
+    nextIncreaseRent: nextIncreaseOn ? tenancyRate(t, nextIncreaseOn) : null,
   };
 }
 

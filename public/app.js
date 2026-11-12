@@ -32,7 +32,7 @@ const todayIST = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0,
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const METHOD = { razorpay: 'Razorpay', upi: 'UPI', cash: 'Cash', bank: 'Bank transfer', other: 'Other' };
 const ID_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving licence', 'Voter ID', 'Other'];
-const MONTH_CHIP = { paid: ['paid', 'Paid'], partial: ['partial', 'Part paid'], pending: ['pending', 'Pending'], running: ['vacant', 'Running'], 'to-collect': ['upcoming', 'To collect'] };
+const MONTH_CHIP = { paid: ['paid', 'Paid'], partial: ['partial', 'Part paid'], pending: ['pending', 'Pending'], running: ['vacant', 'Running'], 'to-collect': ['upcoming', 'To collect'], future: ['vacant', 'Not started'] };
 const STATUS = { paid: 'Paid', pending: 'Pending', vacant: 'Vacant', free: 'Rent-free', upcoming: 'Moving in' };
 
 function toast(text, ms = 2600) {
@@ -87,6 +87,14 @@ function openSheet(html, onSubmit) {
   return $sheet.querySelector('.sheet');
 }
 const closeSheet = () => ($sheet.innerHTML = '');
+// Tenant form: show the "already living here" dates only when ticked.
+$sheet.addEventListener('change', (e) => {
+  if (e.target.name !== 'existing') return;
+  const box = $sheet.querySelector('[data-existing]');
+  if (box) box.hidden = !e.target.checked;
+  const label = $sheet.querySelector('[data-rent-label]');
+  if (label) label.textContent = e.target.checked ? 'Current monthly rent' : 'Monthly rent';
+});
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSheet());
 
 // ---------- shell ----------
@@ -267,13 +275,14 @@ async function sendLink(tenancyId) {
 
 // ---------- owner: units ----------
 
-const tileLabel = (u) => {
+const tileLabel = (u, today) => {
+  if (u.tenancy?.bill_from && u.tenancy.bill_from > today) return `<span class="chip vacant">From ${monthOf(u.tenancy.bill_from)}</span>`;
   if (u.status === 'pending') return `<span class="chip pending">${plural(u.tenancy.pendingMonths, 'month')} due</span>`;
   return `<span class="chip ${u.status}">${STATUS[u.status]}</span>`;
 };
 
 async function viewUnits() {
-  const { units, former } = await api('/api/units');
+  const { units, former, today } = await api('/api/units');
   const floors = [];
   for (const u of units) {
     let f = floors.find((x) => x.name === u.floor);
@@ -296,7 +305,7 @@ async function viewUnits() {
           .map(
             (u) => `<a class="tile ${u.status}" data-status="${u.status}" href="#/unit/${esc(u.code)}"><div class="c">${esc(u.code)}</div>
             <div class="n">${esc(u.tenancy?.contact_name || u.note || '')}&nbsp;</div>
-            <div class="r">${u.tenancy && !u.rent_free ? `${inr(u.tenancy.currentRent)}/mo` : '&nbsp;'}</div>${tileLabel(u)}</a>`
+            <div class="r">${u.tenancy && !u.rent_free ? `${inr(u.tenancy.currentRent)}/mo` : '&nbsp;'}</div>${tileLabel(u, today)}</a>`
           )
           .join('')}</div></section>`
       )
@@ -350,8 +359,16 @@ function tenancyForm(t, rentFree, prefill = null) {
     </div>
     <div class="two">
       <label class="f">Move-in date <input name="start_date" type="date" required value="${esc(t?.start_date || todayIST())}"></label>
-      ${rentFree ? '<input type="hidden" name="base_rent" value="0">' : `<label class="f">Monthly rent (₹) <input name="base_rent" inputmode="numeric" required value="${esc(t?.base_rent ?? '')}"></label>`}
+      ${rentFree ? '<input type="hidden" name="base_rent" value="0">' : `<label class="f"><span data-rent-label>${t?.bill_from || t?.next_increase_on ? 'Current monthly rent' : 'Monthly rent'}</span> (₹) <input name="base_rent" inputmode="numeric" required value="${esc(t?.base_rent ?? '')}"></label>`}
     </div>
+    ${rentFree ? '' : `<label class="chk existing"><input type="checkbox" name="existing" ${t?.bill_from || t?.next_increase_on ? 'checked' : ''}> Already living here before this app</label>
+    <div class="existing-box" data-existing ${t?.bill_from || t?.next_increase_on ? '' : 'hidden'}>
+      <div class="two">
+        <label class="f">Charge rent from <input name="bill_from" type="date" value="${esc(t?.bill_from || nextFirst())}"></label>
+        <label class="f">Next 5% increase on <input name="next_increase_on" type="date" value="${esc(t?.next_increase_on || '')}"></label>
+      </div>
+      <p class="note">Nothing before “Charge rent from” is charged or asked for. Enter their current rent above. After the next increase, it goes up 5% every 11 months. Leave the increase date empty to count 11-month cycles from the move-in date instead.</p>
+    </div>`}
     <label class="f">Advance / deposit (₹, refundable) <input name="deposit" inputmode="numeric" value="${esc(t?.deposit ?? '')}"></label>
     ${t ? '' : `<label class="f">Everyone living there <small>(one name per line)</small><textarea name="people" rows="3" placeholder="Same as tenant name if left empty">${esc((prefill?.people || []).join('\n'))}</textarea></label>`}
     <label class="f">Notes <textarea name="notes" rows="2" maxlength="500">${esc(t?.notes)}</textarea></label>
@@ -360,8 +377,13 @@ function tenancyForm(t, rentFree, prefill = null) {
   </form>`;
 }
 
+const nextFirst = () => {
+  const [y, m] = todayIST().split('-').map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+};
 const tenancyBody = (v) => ({
   ...v,
+  existing: v.existing === 'on',
   phone: v.phone || v.whatsapp,
   base_rent: String(v.base_rent || '0').replace(/[,₹\s]/g, ''),
   deposit: String(v.deposit || '0').replace(/[,₹\s]/g, ''),
@@ -400,13 +422,15 @@ async function viewUnit(code) {
         ? `<div class="owe red"><div><div style="font-weight:700">${plural(t.pendingMonths, 'month')} pending</div></div><b>${inr(t.outstanding)}</b></div>`
         : unit.rent_free
           ? `<div class="owe green"><div style="font-weight:700">Rent-free</div></div>`
+          : t.bill_from && t.bill_from > d.today
+          ? `<div class="owe green"><div style="font-weight:700">Rent starts ${fmtDate(t.bill_from)}</div><b>—</b></div>`
           : `<div class="owe green"><div style="font-weight:700">${t.outstanding < 0 ? 'Paid ahead' : 'All paid'}</div><b>${t.outstanding < 0 ? inr(-t.outstanding) + ' credit' : '✓'}</b></div>`;
     const contact = [t.whatsapp && `WhatsApp ${t.whatsapp}`, t.phone && t.phone !== t.whatsapp && `SMS ${t.phone}`].filter(Boolean).join(' · ') || 'No number yet';
     body += `${t.start_date > d.today ? `<div class="banner">Moves in on ${fmtDate(t.start_date)}.</div>` : ''}${owe}
       <div class="card"><div class="row" style="padding-top:0"><div class="main"><div class="t">${esc(t.contact_name)}</div><div class="d">${esc(contact)}</div></div>
         ${t.phone || t.whatsapp ? `<a class="btn small" href="tel:+91${esc(t.phone || t.whatsapp)}">Call</a>` : ''}</div>
         <div class="facts" style="margin-top:.6rem">
-          <div><div class="l">Moved in</div><div class="v">${fmtDate(t.start_date)}</div></div>
+          <div><div class="l">Moved in</div><div class="v">${fmtDate(t.start_date)}${t.bill_from ? `<br><span class="note">charged from ${fmtDate(t.bill_from)}</span>` : ''}</div></div>
           <div><div class="l">Rent now</div><div class="v">${inr(t.currentRent)}</div></div>
           <div><div class="l">Next due</div><div class="v">${t.nextDueDate ? `${fmtDate(t.nextDueDate)}<br><span class="note">${inr(t.nextRent)}</span>` : '—'}</div></div>
           <div><div class="l">Next 5% increase</div><div class="v">${!unit.rent_free && t.nextIncreaseOn ? `${fmtDate(t.nextIncreaseOn)}<br><span class="note">to ${inr(t.nextIncreaseRent)}</span>` : '—'}</div></div>
@@ -433,7 +457,7 @@ async function viewUnit(code) {
           ? t.periods
               .map(
                 (p) => `<div class="row"><div class="main"><div class="t">${monthOf(p.month)}</div>
-                <div class="d">${p.full ? '' : `${p.days} days (${Number(p.from.slice(8))}–${Number(p.to.slice(8))}) · `}${p.status === 'running' ? 'This month · collect after it ends' : `Due by ${fmtDate(p.due)}`}${p.status === 'partial' ? ` · ${inr(p.paid)} paid` : ''}</div></div>
+                <div class="d">${p.full ? '' : `${p.days} days (${Number(p.from.slice(8))}–${Number(p.to.slice(8))}) · `}${p.status === 'future' ? `Charging starts ${fmtDate(p.from)} · due by ${fmtDate(p.due)}` : p.status === 'running' ? 'This month · collect after it ends' : `Due by ${fmtDate(p.due)}`}${p.status === 'partial' ? ` · ${inr(p.paid)} paid` : ''}</div></div>
                 <div class="amt">${inr(p.rent)}</div><span class="chip ${MONTH_CHIP[p.status][0]}">${MONTH_CHIP[p.status][1]}</span></div>`
               )
               .join('')

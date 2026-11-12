@@ -12,6 +12,9 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - Each month's rent is **due by the 10th of the next month**. After that it shows as pending, in red for Anita.
   - Rent goes up **5% from the 1st after every 11 months**, compounding and rounded to the rupee. For example, moving in on 12 Nov 2026 means the new rent starts on 1 Nov 2027.
   - Part payments are allowed and clear the oldest month first.
+- **Tenants who lived here before the app:** tick **Already living here before this app** when adding them.
+  - Enter the real (backdated) move-in date, their **current** rent, the month to **charge rent from** (the 1st of next month by default), and the date of their **next 5% increase**.
+  - Nothing before the charge-from date is charged or asked for. After the next increase, rent goes up 5% every 11 months.
 - **Moving out:** record the last day stayed, then settle the deposit.
   - **One month's rent is kept for maintenance** (you can change the amount), and any rent still owed is taken from the rest. The app records that as a payment.
   - The refund is what's left.

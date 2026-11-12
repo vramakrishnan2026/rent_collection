@@ -73,6 +73,8 @@ export interface TenancyRow {
   deposit_refund: number | null;
   deposit_refunded_on: string | null;
   deposit_maintenance: number | null;
+  bill_from: string | null;
+  next_increase_on: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -158,6 +160,8 @@ function tenancySummary(t: TenancyRow, s: State, today: string) {
     deposit_refund: t.deposit_refund,
     deposit_refunded_on: t.deposit_refunded_on,
     deposit_maintenance: t.deposit_maintenance,
+    bill_from: t.bill_from,
+    next_increase_on: t.next_increase_on,
     notes: t.notes,
     collectable: ledger.collectable,
     owedThroughEnd: ledger.owedThroughEnd,
@@ -364,11 +368,24 @@ function tenancyFields(body: any, rentFree: boolean) {
   if (!contact_name) throw new ValidationError('Tenant name is required');
   const phone = mobile(body?.phone, 'Phone');
   const whatsapp = mobile(body?.whatsapp, 'WhatsApp number') ?? phone;
+  const start_date = date(body?.start_date, 'Move-in date');
+  // Tenants who were here before the app: charge from a later date, with an owner-entered next increase.
+  const existing = body?.existing === true || body?.existing === 'on' || body?.existing === 'true';
+  let bill_from: string | null = null;
+  let next_increase_on: string | null = null;
+  if (existing) {
+    bill_from = date(body?.bill_from, 'Charge rent from');
+    if (bill_from <= start_date) bill_from = null;
+    next_increase_on = str(body?.next_increase_on, 10) ? date(body?.next_increase_on, 'Next 5% increase') : null;
+    if (next_increase_on && next_increase_on <= start_date) throw new ValidationError('The next 5% increase must be after the move-in date');
+  }
   return {
     contact_name,
     phone,
     whatsapp,
-    start_date: date(body?.start_date, 'Move-in date'),
+    start_date,
+    bill_from,
+    next_increase_on,
     base_rent: rentFree ? 0 : rupees(body?.base_rent, 'Rent', { min: 1 }),
     deposit: rupees(body?.deposit ?? 0, 'Deposit'),
     notes: str(body?.notes, 500) || null,
@@ -386,9 +403,9 @@ export async function createTenancy(db: D1Database, body: any) {
   const stmts = [
     db
       .prepare(
-        'INSERT INTO tenancies (id, unit_code, contact_name, phone, whatsapp, start_date, base_rent, deposit, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO tenancies (id, unit_code, contact_name, phone, whatsapp, start_date, bill_from, next_increase_on, base_rent, deposit, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
-      .bind(id, code, f.contact_name, f.phone, f.whatsapp, f.start_date, f.base_rent, f.deposit, f.notes),
+      .bind(id, code, f.contact_name, f.phone, f.whatsapp, f.start_date, f.bill_from, f.next_increase_on, f.base_rent, f.deposit, f.notes),
   ];
   const people: any[] = Array.isArray(body?.people) && body.people.length ? body.people : [{ name: f.contact_name }];
   for (const p of people.slice(0, 12)) {
@@ -414,13 +431,13 @@ async function getTenancy(db: D1Database, id: string) {
 export async function updateTenancy(db: D1Database, id: string, body: any) {
   const t = await getTenancy(db, id);
   const unit = await db.prepare('SELECT rent_free FROM units WHERE code = ?').bind(t.unit_code).first<{ rent_free: number }>();
-  const f = tenancyFields({ ...t, ...body }, Boolean(unit?.rent_free));
+  const f = tenancyFields({ ...t, existing: Boolean(t.bill_from || t.next_increase_on), ...body }, Boolean(unit?.rent_free));
   if (t.end_date && f.start_date >= t.end_date) throw new ValidationError('Move-in date must be before the move-out date');
   await db
     .prepare(
-      'UPDATE tenancies SET contact_name = ?, phone = ?, whatsapp = ?, start_date = ?, base_rent = ?, deposit = ?, notes = ?, updated_at = ? WHERE id = ?'
+      'UPDATE tenancies SET contact_name = ?, phone = ?, whatsapp = ?, start_date = ?, bill_from = ?, next_increase_on = ?, base_rent = ?, deposit = ?, notes = ?, updated_at = ? WHERE id = ?'
     )
-    .bind(f.contact_name, f.phone, f.whatsapp, f.start_date, f.base_rent, f.deposit, f.notes, nowIso(), id)
+    .bind(f.contact_name, f.phone, f.whatsapp, f.start_date, f.bill_from, f.next_increase_on, f.base_rent, f.deposit, f.notes, nowIso(), id)
     .run();
 }
 
