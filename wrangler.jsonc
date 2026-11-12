@@ -18,11 +18,11 @@
   },
 
   // Cloudflare D1 (SQLite). Create it in the dashboard (Storage & Databases > D1)
-  // with the name "challaghatta-rent", then paste its Database ID below.
+  // with the name "rent_collection", then paste its Database ID below.
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "challaghatta-rent",
+      "database_name": "rent_collection",
       "database_id": "d7b71d89-7cc4-441b-92df-554ba2558641",
       "migrations_dir": "migrations"
     }

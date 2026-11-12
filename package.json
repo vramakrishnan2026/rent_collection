@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "wrangler d1 migrations apply challaghatta-rent --local && wrangler dev",
-    "deploy": "wrangler d1 migrations apply challaghatta-rent --remote && wrangler deploy",
+    "start": "wrangler d1 migrations apply rent_collection --local && wrangler dev",
+    "deploy": "wrangler d1 migrations apply rent_collection --remote && wrangler deploy",
     "lint": "tsc --noEmit",
     "test": "node --experimental-strip-types --no-warnings tests/run.mjs"
   },
