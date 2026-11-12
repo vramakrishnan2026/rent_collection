@@ -35,11 +35,11 @@ const ID_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving licence', 'Voter ID', '
 const MONTH_CHIP = { paid: ['paid', 'Paid'], partial: ['partial', 'Part paid'], pending: ['pending', 'Pending'], running: ['vacant', 'Running'], 'to-collect': ['upcoming', 'To collect'] };
 const STATUS = { paid: 'Paid', pending: 'Pending', vacant: 'Vacant', free: 'Rent-free', upcoming: 'Moving in' };
 
-function toast(text) {
+function toast(text, ms = 2600) {
   $toast.textContent = text;
   $toast.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => $toast.classList.remove('show'), 2600);
+  toast.t = setTimeout(() => $toast.classList.remove('show'), ms);
 }
 
 async function api(path, { method = 'GET', body, form } = {}) {
@@ -206,7 +206,7 @@ async function viewHome() {
   const banners = [];
   if (!s.razorpay.configured) banners.push('Razorpay isn’t connected yet, so rent links are off. You can still record payments by hand.');
   else if (s.razorpay.mode === 'test') banners.push('Razorpay is in <b>test mode</b>: links take test payments only.' + (d.collected.testTotal ? ` ${inr(d.collected.testTotal)} of test payments are counted (clear them in Settings).` : ''));
-  if (d.idsWaiting?.length) banners.push(`📷 New ID photos from ${GUARD} to check: ${d.idsWaiting.map((w) => `<a href="#/unit/${esc(w.unit)}"><b>${esc(w.unit)}</b>${w.n > 1 ? ` (${w.n})` : ''}</a>`).join(', ')}`);
+  if (d.idsWaiting?.length) banners.push(`📷 New ID photos to attach: ${d.idsWaiting.map((w) => `<a href="#/unit/${esc(w.unit)}"><b>${esc(w.unit)}</b>${w.n > 1 ? ` (${w.n})` : ''}</a>`).join(', ')}`);
   const noTenants = d.occupied === 0 && !d.pending.length;
 
   headerExtra = `<a class="btn small" href="#/security">◉ ${GUARD}’s view</a>`;
@@ -373,7 +373,7 @@ async function viewUnit(code) {
   headerExtra = `<a class="icon-btn" href="#/units" title="Back">←</a>`;
   let body = '<div class="unit-cols"><div class="ucol">';
   if (d.waitingIds?.length) {
-    body += `<div class="card waiting"><div class="card-h"><h2>New IDs from ${GUARD}</h2><span class="chip upcoming">${d.waitingIds.length}</span></div><div class="list">${d.waitingIds
+    body += `<div class="card waiting"><div class="card-h"><h2>New IDs to attach</h2><span class="chip upcoming">${d.waitingIds.length}</span></div><div class="list">${d.waitingIds
       .map(
         (w) => `<div class="row wrow"><div class="main"><div class="t">${w.names.length ? esc(w.names.join(', ')) : w.address ? 'Back of card (address)' : w.is_pdf ? 'PDF' : 'Name not read'}${w.id_type ? ` <span class="chip vacant">${esc(w.id_type)}</span>` : ''}</div>
           ${w.address ? `<div class="d addr">📍 ${esc(w.address)}</div>` : ''}
@@ -392,7 +392,7 @@ async function viewUnit(code) {
   if (!t) {
     body += `<div class="card"><p style="margin-top:0">${unit.rent_free ? 'Rent-free unit. Add who lives here to keep their ID on file.' : 'No tenant right now.'}</p>
       <div class="actions"><button class="btn primary" data-act="add">Add tenant</button>
-      <label class="btn">📷 Start from ID photo<input type="file" accept="image/*,application/pdf" capture="environment" data-id-first hidden></label></div>
+      <label class="btn">📷 Start from ID photo<input type="file" accept="image/*,application/pdf" data-id-first hidden></label></div>
       <p class="note">Start from an ID photo: the app reads the name off the ID and fills in the form for you. The photo is saved to Drive.</p></div></div><div class="ucol">`;
   } else {
     const owe =
@@ -421,7 +421,7 @@ async function viewUnit(code) {
           (p) => `<div class="row"><div class="main"><div class="t">${esc(p.name)}</div><div class="d">${esc(p.id_type || 'ID type not set')} · ${
             p.drive_file_id ? `<a href="https://drive.google.com/file/d/${esc(p.drive_file_id)}/view" target="_blank" rel="noopener">ID saved ${fmtDate(p.id_uploaded_at)}</a>` : '<span style="color:var(--red)">No ID yet</span>'
           }</div>${p.address ? `<div class="d addr">📍 ${esc(p.address)}</div>` : ''}</div>
-          <label class="btn small">${p.drive_file_id ? 'Replace' : 'Add'} ID<input type="file" accept="image/*,application/pdf" capture="environment" data-id-for="${esc(p.id)}" hidden></label>
+          <label class="btn small">${p.drive_file_id ? 'Replace' : 'Add'} ID<input type="file" accept="image/*,application/pdf" data-id-for="${esc(p.id)}" hidden></label>
           <button class="btn small" data-edit-person="${esc(p.id)}" title="Edit">✎</button></div>`
         )
         .join('')}</div>
@@ -531,25 +531,14 @@ function wireUnit(d) {
   $app.querySelector('[data-id-first]')?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    toast('Reading the ID…');
+    toast('Uploading and reading the ID…', 20000);
     try {
-      const form = new FormData();
-      form.append('unit', unit.code);
-      form.append('takenAt', new Date().toISOString());
-      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-      if (isPdf) form.append('photo', new Blob([file], { type: 'application/pdf' }), 'id.pdf');
-      else {
-        const p = await preparePhoto(file).catch(() => ({ photo: file, preview: null }));
-        form.append('photo', p.photo, 'id.jpg');
-        if (p.preview) form.append('preview', p.preview);
-      }
-      const res = await fetch('/api/id-uploads', { method: 'POST', body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || data.error || `Error ${res.status}`);
+      const data = await uploadIdFile(unit.code, file);
+      toast('ID saved', 1500);
       await reload(); // shows the photo under "New IDs" in case the form is closed
       addTenant(fromNames(data.names || []));
     } catch (err) {
-      toast(err.message);
+      toast(`ID not saved: ${err.message}`, 8000);
     } finally {
       e.target.value = '';
     }
@@ -597,9 +586,25 @@ function wireUnit(d) {
       reload();
     })
   );
-  on('[data-act=person]', () =>
+  const confirmPerson = (d) =>
     openSheet(
+      `<h2>New person from the ID</h2><form>
+        <div class="banner">${d.names?.length ? `Read from the ID: <b>${esc(readSummary(d))}</b>. Check the spelling.` : 'The name couldn’t be read (PDFs and unclear photos can’t be read). Type it in.'}</div>
+        <label class="f">Name <input name="name" required maxlength="80" value="${esc(d.names?.[0] || '')}"></label>
+        <div class="actions"><button type="button" class="btn" data-close>Later</button><button class="btn primary" type="submit">Add person</button></div>
+        <p class="note">If you choose Later, the ID waits under “New IDs to attach” on this unit.</p></form>`,
+      async (v) => {
+        await api(`/api/id-uploads/${encodeURIComponent(d.uploadId)}/attach`, { method: 'POST', body: { name: v.name } });
+        closeSheet();
+        toast(`${v.name} added with their ID`, 3000);
+        reload();
+      }
+    );
+  on('[data-act=person]', () => {
+    const sheet = openSheet(
       `<h2>Add person · ${esc(unit.code)}</h2><form>
+        <label class="btn green block" style="margin-bottom:.4rem">📷 From ID photo<input type="file" accept="image/*,application/pdf" data-person-id-file hidden></label>
+        <p class="note" style="margin-top:0">Take or choose a photo of their ID: the name, ID type and address are read from it and the ID is saved. Or type the name below.</p>
         <label class="f">Name <input name="name" required maxlength="80"></label>
         <label class="f">ID type <select name="id_type"><option value="">Choose…</option>${ID_TYPES.map((x) => `<option>${x}</option>`).join('')}</select></label>
         <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Add</button></div></form>`,
@@ -608,8 +613,32 @@ function wireUnit(d) {
         closeSheet();
         reload();
       }
-    )
-  );
+    );
+    sheet.querySelector('[data-person-id-file]').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const label = e.target.closest('label');
+      label.firstChild.textContent = 'Uploading and reading the ID…';
+      try {
+        const d = await uploadIdFile(unit.code, file);
+        if (d.status === 'linked') {
+          closeSheet();
+          toast(`ID attached to ${d.names.join(', ')}, already listed here`, 4000);
+          return reload();
+        }
+        if (d.paired) {
+          closeSheet();
+          toast('Back of the card: address added to the person from the front', 4000);
+          return reload();
+        }
+        await reload();
+        confirmPerson(d);
+      } catch (err) {
+        label.firstChild.textContent = '📷 From ID photo';
+        sheet.querySelector('form').insertAdjacentHTML('afterbegin', `<div class="err">ID not saved: ${esc(err.message)}</div>`);
+      }
+    });
+  });
   on('[data-edit-person]', (el) => {
     const p = t.people.find((x) => x.id === el.dataset.editPerson);
     const sheet = openSheet(
@@ -635,15 +664,15 @@ function wireUnit(d) {
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       if (!file) return;
-      toast('Uploading ID…');
+      toast('Uploading and reading the ID…', 20000);
       try {
-        const form = new FormData();
-        form.append('file', await shrink(file));
-        await api(`/api/people/${encodeURIComponent(input.dataset.idFor)}/id`, { method: 'POST', form });
-        toast('ID saved to Drive');
+        const d = await uploadIdFile(unit.code, file, input.dataset.idFor);
+        toast(`ID saved${readSummary(d) ? ` · ${readSummary(d)}` : ''}`, 4000);
         reload();
       } catch (e) {
-        toast(e.message);
+        toast(`ID not saved: ${e.message}`, 8000);
+      } finally {
+        input.value = '';
       }
     })
   );
@@ -658,6 +687,27 @@ function wireUnit(d) {
     reload();
   });
 }
+
+/** Owner upload of one ID photo/PDF: saved to Drive, type/name/address read. personId = attach to that person. */
+async function uploadIdFile(unitCode, file, personId = null) {
+  const form = new FormData();
+  form.append('unit', unitCode);
+  form.append('takenAt', new Date().toISOString());
+  if (personId) form.append('person_id', personId);
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  if (isPdf) form.append('photo', new Blob([file], { type: 'application/pdf' }), 'id.pdf');
+  else {
+    const p = await preparePhoto(file).catch(() => ({ photo: file, preview: null }));
+    form.append('photo', p.photo, 'id.jpg');
+    if (p.preview) form.append('preview', p.preview);
+  }
+  const res = await fetch('/api/id-uploads', { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || data.error || `Upload failed (${res.status})`);
+  return data;
+}
+const readSummary = (d) =>
+  [d.idType, d.names?.length ? d.names.join(', ') : null, d.address ? 'address read' : null].filter(Boolean).join(' · ');
 
 async function settleSheet(tenancyId, done) {
   const sheet = openSheet('<h2>Settle deposit</h2><p class="note">Working it out…</p>');

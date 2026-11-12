@@ -422,6 +422,30 @@ await test('when the model won’t answer in JSON, the printed lines are used', 
   assert.equal(r.body.matched, 1);
   aiLines = null;
 });
+await test('owner: "Add ID" on a person attaches to that person, with type and address read', async () => {
+  const kiran = (await call('/api/units/G2')).body.current.people.find((p) => p.name === 'Kiran Shetty');
+  aiCards = [{ type: 'PAN', name: 'K SHETTY', address: null }];
+  const form = new FormData();
+  form.append('unit', 'G2');
+  form.append('person_id', kiran.id);
+  form.append('photo', new Blob([new Uint8Array(5000)], { type: 'image/jpeg' }), 'id.jpg');
+  form.append('preview', 'x'.repeat(500));
+  const res = await worker.fetch(new Request(BASE + '/api/id-uploads', { method: 'POST', headers: { Cookie: owner }, body: form }), env);
+  assert.equal(res.status, 200);
+  const p = (await call('/api/units/G2')).body.current.people.find((x) => x.id === kiran.id);
+  assert.equal(p.id_type, 'PAN');
+  assert.ok(p.drive_file_name.includes('K Shetty'));
+  aiCards = null;
+});
+await test('owner: a new person from an ID photo', async () => {
+  aiCards = [{ type: 'Driving licence', name: 'LATA RAO', address: '12 Lake Road, Bengaluru 560034' }];
+  const r = await upload('G2', owner);
+  assert.equal(r.body.status, 'new');
+  assert.equal((await call(`/api/id-uploads/${r.body.uploadId}/attach`, { method: 'POST', body: { name: 'Lata Rao' } })).status, 200);
+  const p = (await call('/api/units/G2')).body.current.people.find((x) => x.name === 'Lata Rao');
+  assert.deepEqual([p.id_type, p.address, Boolean(p.drive_file_id)], ['Driving licence', '12 Lake Road, Bengaluru 560034', true]);
+  aiCards = null;
+});
 await test('a PDF sent without a file type is still accepted', async () => {
   const form = new FormData();
   form.append('unit', 'G2');

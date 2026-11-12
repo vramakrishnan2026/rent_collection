@@ -28,7 +28,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - A back-of-Aadhaar photo (address, no name) sent within 15 minutes of the front is joined to the same person.
   - **Settings › Reading IDs** shows what the reader saw last time, to help when a card isn't read.
   - If the name matches someone listed in that unit in full, the photo is attached to them automatically.
-  - Otherwise it waits under **New IDs from Anita** on the unit's page (the dashboard shows which units), where you attach it to a person, add a new person, or dismiss it.
+  - Otherwise it waits under **New IDs to attach** on the unit's page (the dashboard shows which units), where you attach it to a person, add a new person, or dismiss it.
   - Her screens can switch between English and Nepali.
 - **Anita's phone (no Gmail needed):** in **Settings › Anita's phone › Add a phone** you get a one-time 6-digit code, valid for 24 hours, plus a link to WhatsApp to Anita.
   - The code signs in that phone only, for 400 days, and it sees only rent status and Add ID.

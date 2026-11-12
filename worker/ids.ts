@@ -50,7 +50,7 @@ function ist(iso: string) {
 
 // ---------- upload ----------
 
-export async function handleIdUpload(request: Request, env: Env, email: string) {
+export async function handleIdUpload(request: Request, env: Env, email: string, role: 'owner' | 'security' = 'security') {
   let form: FormData;
   try {
     form = await request.formData();
@@ -114,6 +114,19 @@ export async function handleIdUpload(request: Request, env: Env, email: string) 
   // Attach to people listed in the unit's current tenancy when the names match.
   const tenancy = await env.DB.prepare('SELECT id FROM tenancies WHERE unit_code = ? AND end_date IS NULL').bind(code).first<{ id: string }>();
   let linked: string[] = [];
+  // The owner tapped "Add ID" on a particular person: attach it to them, whatever name was read.
+  const forPerson = role === 'owner' ? String(form.get('person_id') || '') : '';
+  if (forPerson) {
+    const p = tenancy && (await env.DB.prepare('SELECT id FROM people WHERE id = ? AND tenancy_id = ?').bind(forPerson, tenancy.id).first());
+    if (!p) throw new ValidationError('That person isn’t in this unit');
+    const uploadId = crypto.randomUUID();
+    await applyToPerson(env, forPerson, { fileId: file.id, fileName, idType, address, replace: true });
+    await env.DB
+      .prepare("INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id, id_type, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'linked', ?, ?, ?)")
+      .bind(uploadId, code, tenancy!.id, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, forPerson, idType, address)
+      .run();
+    return { status: 200, body: { success: true, uploadId, names, idType, address: Boolean(address), matched: 1, paired: false, unit: code } };
+  }
   if (tenancy && names.length) {
     const people = (await env.DB.prepare('SELECT id, name FROM people WHERE tenancy_id = ?').bind(tenancy.id).all<{ id: string; name: string }>()).results;
     for (const n of names) {
@@ -139,23 +152,24 @@ export async function handleIdUpload(request: Request, env: Env, email: string) 
   for (const pid of linked) await applyToPerson(env, pid, { fileId: pairedWith ? null : file.id, fileName, idType: idType ?? pairedWith?.id_type ?? null, address });
   // Paired back photo: its address went to the people (or onto the waiting front photo), so nothing is left to do.
   const status = pairedWith ? (linked.length ? 'linked' : 'dismissed') : names.length > 0 && linked.length === names.length ? 'linked' : 'new';
+  const uploadId = crypto.randomUUID();
   await env.DB
     .prepare(
       'INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id, id_type, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .bind(crypto.randomUUID(), code, tenancy?.id ?? null, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, status, linked[0] ?? null, idType, address)
+    .bind(uploadId, code, tenancy?.id ?? null, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, status, linked[0] ?? null, idType, address)
     .run();
-  return { status: 200, body: { success: true, names, idType, address: Boolean(address), matched: linked.length, paired: Boolean(pairedWith), unit: code } };
+  return { status: 200, body: { success: true, uploadId, status, names, idType, address: Boolean(address), matched: linked.length, paired: Boolean(pairedWith), unit: code } };
 }
 
 /** Saves an ID's file and details on a person (keeps what's already there if the ID doesn't have it). */
-async function applyToPerson(env: Env, personId: string, d: { fileId: string | null; fileName: string; idType: string | null; address: string | null }) {
+async function applyToPerson(env: Env, personId: string, d: { fileId: string | null; fileName: string; idType: string | null; address: string | null; replace?: boolean }) {
   const now = new Date().toISOString();
   if (d.fileId) {
     await env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(d.fileId, d.fileName, now, personId).run();
   }
   await env.DB
-    .prepare('UPDATE people SET id_type = COALESCE(id_type, ?), address = COALESCE(?, address) WHERE id = ?')
+    .prepare(d.replace ? 'UPDATE people SET id_type = COALESCE(?, id_type), address = COALESCE(?, address) WHERE id = ?' : 'UPDATE people SET id_type = COALESCE(id_type, ?), address = COALESCE(?, address) WHERE id = ?')
     .bind(d.idType, d.address, personId)
     .run();
 }

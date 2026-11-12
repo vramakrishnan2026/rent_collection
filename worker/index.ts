@@ -76,7 +76,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
 
   // "Add ID" screen: the security guard and owners can photograph tenant IDs.
   if (pathname === '/api/id-uploads' && method === 'POST') {
-    const { status, body } = await handleIdUpload(request, env, user.email);
+    const { status, body } = await handleIdUpload(request, env, user.email, user.role);
     return json(body, status);
   }
 
