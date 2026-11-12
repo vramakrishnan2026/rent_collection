@@ -88,6 +88,8 @@ export interface PersonRow {
   drive_file_name: string | null;
   id_uploaded_at: string | null;
   address: string | null;
+  back_file_id: string | null;
+  back_file_name: string | null;
 }
 
 export interface PaymentRow {

@@ -441,6 +441,7 @@ await test('front then back of an Aadhaar: name from the front, address from the
   assert.equal(p.address, 'S/O Venkat Rao, 12 Lake Road, Bengaluru, Karnataka 560034');
   assert.equal(p.id_type, 'Aadhaar');
   assert.ok(!p.drive_file_name.includes('Back'), 'the front stays as the ID photo');
+  assert.ok(p.back_file_id && p.back_file_name.includes('Back'), 'and the back is saved as the second photo');
   assert.equal((await call('/api/units/G2')).body.waitingIds.length, 0);
   aiCards = null;
 });
@@ -464,6 +465,24 @@ await test('owner: "Add ID" on a person attaches to that person, with type and a
   const p = (await call('/api/units/G2')).body.current.people.find((x) => x.id === kiran.id);
   assert.equal(p.id_type, 'PAN');
   assert.ok(p.drive_file_name.includes('K Shetty'));
+  aiCards = null;
+});
+await test('owner: "Add back" saves a second photo on the same person', async () => {
+  const lata0 = (await call('/api/units/G2')).body.current.people.find((p) => p.name === 'Kiran Shetty');
+  const front = lata0.drive_file_id;
+  aiCards = [{ type: 'Aadhaar', name: null, address: 'S/O Shetty, 5 Hill Road, Bengaluru 560001' }];
+  const form = new FormData();
+  form.append('unit', 'G2');
+  form.append('person_id', lata0.id);
+  form.append('side', 'back');
+  form.append('photo', new Blob([new Uint8Array(5000)], { type: 'image/jpeg' }), 'id.jpg');
+  form.append('preview', 'x'.repeat(500));
+  const res = await worker.fetch(new Request(BASE + '/api/id-uploads', { method: 'POST', headers: { Cookie: owner }, body: form }), env);
+  assert.equal(res.status, 200);
+  const p = (await call('/api/units/G2')).body.current.people.find((x) => x.id === lata0.id);
+  assert.equal(p.drive_file_id, front, 'front unchanged');
+  assert.ok(p.back_file_id && p.back_file_id !== front);
+  assert.equal(p.address, 'S/O Shetty, 5 Hill Road, Bengaluru 560001');
   aiCards = null;
 });
 await test('owner: a new person from an ID photo', async () => {

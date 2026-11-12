@@ -443,9 +443,14 @@ async function viewUnit(code) {
       <div class="card"><h2>People &amp; IDs</h2><div class="list">${t.people
         .map(
           (p) => `<div class="row"><div class="main"><div class="t">${esc(p.name)}</div><div class="d">${esc(p.id_type || 'ID type not set')} · ${
-            p.drive_file_id ? `<a href="https://drive.google.com/file/d/${esc(p.drive_file_id)}/view" target="_blank" rel="noopener">ID saved ${fmtDate(p.id_uploaded_at)}</a>` : '<span style="color:var(--red)">No ID yet</span>'
+            p.drive_file_id
+              ? `<a href="https://drive.google.com/file/d/${esc(p.drive_file_id)}/view" target="_blank" rel="noopener">Front</a>${
+                  p.back_file_id ? ` · <a href="https://drive.google.com/file/d/${esc(p.back_file_id)}/view" target="_blank" rel="noopener">Back</a>` : ' · <span class="muted">no back</span>'
+                } · saved ${fmtDate(p.id_uploaded_at)}`
+              : '<span style="color:var(--red)">No ID yet</span>'
           }</div>${p.address ? `<div class="d addr">📍 ${esc(p.address)}</div>` : ''}</div>
-          <label class="btn small">${p.drive_file_id ? 'Replace' : 'Add'} ID<input type="file" accept="image/*,application/pdf" data-id-for="${esc(p.id)}" hidden></label>
+          <div class="idbtns"><label class="btn small">${p.drive_file_id ? 'Front ↻' : 'Add ID'}<input type="file" accept="image/*,application/pdf" data-id-for="${esc(p.id)}" data-side="front" hidden></label>
+          ${p.drive_file_id ? `<label class="btn small">${p.back_file_id ? 'Back ↻' : '＋ Add back'}<input type="file" accept="image/*,application/pdf" data-id-for="${esc(p.id)}" data-side="back" hidden></label>` : ''}</div>
           <button class="btn small" data-edit-person="${esc(p.id)}" title="Edit">✎</button></div>`
         )
         .join('')}</div>
@@ -632,7 +637,7 @@ function wireUnit(d) {
       async (v) => {
         await api(`/api/id-uploads/${encodeURIComponent(d.uploadId)}/attach`, { method: 'POST', body: { name: v.name } });
         closeSheet();
-        toast(`${v.name} added with their ID`, 3000);
+        toast(`${v.name} added with their ID. Use “＋ Add back” for the other side.`, 5000);
         reload();
       }
     );
@@ -702,8 +707,9 @@ function wireUnit(d) {
       if (!file) return;
       toast('Uploading and reading the ID…', 20000);
       try {
-        const d = await uploadIdFile(unit.code, file, input.dataset.idFor);
-        toast(`ID saved${readSummary(d) ? ` · ${readSummary(d)}` : ''}`, 4000);
+        const back = input.dataset.side === 'back';
+        const d = await uploadIdFile(unit.code, file, input.dataset.idFor, back ? 'back' : 'front');
+        toast(`${back ? 'Back' : 'ID'} saved${readSummary(d) ? ` · ${readSummary(d)}` : ''}`, 4000);
         reload();
       } catch (e) {
         toast(`ID not saved: ${e.message}`, 8000);
@@ -741,11 +747,12 @@ function pinSheet(question, button, action) {
 }
 
 /** Owner upload of one ID photo/PDF: saved to Drive, type/name/address read. personId = attach to that person. */
-async function uploadIdFile(unitCode, file, personId = null) {
+async function uploadIdFile(unitCode, file, personId = null, side = 'front') {
   const form = new FormData();
   form.append('unit', unitCode);
   form.append('takenAt', new Date().toISOString());
   if (personId) form.append('person_id', personId);
+  if (personId && side === 'back') form.append('side', 'back');
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
   if (isPdf) form.append('photo', new Blob([file], { type: 'application/pdf' }), 'id.pdf');
   else {

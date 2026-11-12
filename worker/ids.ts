@@ -116,11 +116,12 @@ export async function handleIdUpload(request: Request, env: Env, email: string, 
   let linked: string[] = [];
   // The owner tapped "Add ID" on a particular person: attach it to them, whatever name was read.
   const forPerson = role === 'owner' ? String(form.get('person_id') || '') : '';
+  const side: 'front' | 'back' = String(form.get('side') || '') === 'back' ? 'back' : 'front';
   if (forPerson) {
     const p = tenancy && (await env.DB.prepare('SELECT id FROM people WHERE id = ? AND tenancy_id = ?').bind(forPerson, tenancy.id).first());
     if (!p) throw new ValidationError('That person isn’t in this unit');
     const uploadId = crypto.randomUUID();
-    await applyToPerson(env, forPerson, { fileId: file.id, fileName, idType, address, replace: true });
+    await applyToPerson(env, forPerson, { fileId: file.id, fileName, idType, address, replace: true, side });
     await env.DB
       .prepare("INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, names, is_pdf, taken_at, uploaded_by, status, person_id, id_type, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'linked', ?, ?, ?)")
       .bind(uploadId, code, tenancy!.id, file.id, fileName, JSON.stringify(names), isPdf ? 1 : 0, takenAt, email, forPerson, idType, address)
@@ -149,7 +150,7 @@ export async function handleIdUpload(request: Request, env: Env, email: string, 
       }
     }
   }
-  for (const pid of linked) await applyToPerson(env, pid, { fileId: pairedWith ? null : file.id, fileName, idType: idType ?? pairedWith?.id_type ?? null, address });
+  for (const pid of linked) await applyToPerson(env, pid, { fileId: file.id, fileName, idType: idType ?? pairedWith?.id_type ?? null, address, side: pairedWith ? 'back' : 'front' });
   // Paired back photo: its address went to the people (or onto the waiting front photo), so nothing is left to do.
   const status = pairedWith ? (linked.length ? 'linked' : 'dismissed') : names.length > 0 && linked.length === names.length ? 'linked' : 'new';
   const uploadId = crypto.randomUUID();
@@ -163,9 +164,15 @@ export async function handleIdUpload(request: Request, env: Env, email: string, 
 }
 
 /** Saves an ID's file and details on a person (keeps what's already there if the ID doesn't have it). */
-async function applyToPerson(env: Env, personId: string, d: { fileId: string | null; fileName: string; idType: string | null; address: string | null; replace?: boolean }) {
+async function applyToPerson(
+  env: Env,
+  personId: string,
+  d: { fileId: string | null; fileName: string; idType: string | null; address: string | null; replace?: boolean; side?: 'front' | 'back' }
+) {
   const now = new Date().toISOString();
-  if (d.fileId) {
+  if (d.fileId && d.side === 'back') {
+    await env.DB.prepare('UPDATE people SET back_file_id = ?, back_file_name = ? WHERE id = ?').bind(d.fileId, d.fileName, personId).run();
+  } else if (d.fileId) {
     await env.DB.prepare('UPDATE people SET drive_file_id = ?, drive_file_name = ?, id_uploaded_at = ? WHERE id = ?').bind(d.fileId, d.fileName, now, personId).run();
   }
   await env.DB
@@ -227,7 +234,7 @@ export async function attachUpload(env: Env, id: string, body: any) {
   }
   // A back-of-card photo (address only) adds the address without replacing the person's ID photo.
   const backOnly = !safeJson(u.names).length && u.address && body?.person_id;
-  await applyToPerson(env, personId, { fileId: backOnly ? null : u.drive_file_id, fileName: u.file_name, idType: u.id_type, address: u.address });
+  await applyToPerson(env, personId, { fileId: u.drive_file_id, fileName: u.file_name, idType: u.id_type, address: u.address, side: backOnly ? 'back' : 'front' });
   await env.DB.prepare("UPDATE id_uploads SET status = 'linked', person_id = ?, tenancy_id = ? WHERE id = ?").bind(personId, tenancyId, id).run();
 }
 
