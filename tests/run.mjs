@@ -352,7 +352,7 @@ const pair = async (code) => {
 };
 let phone;
 await test('a one-time code pairs the phone, which then sees only the security screens', async () => {
-  const { body } = await call('/api/devices/pair', { method: 'POST', body: { label: 'Security – Lakshmi' } });
+  const { body } = await call('/api/devices/pair', { method: 'POST', body: { label: 'Anita' } });
   assert.match(body.code, /^\d{6}$/);
   assert.ok(body.link.endsWith(`/auth/pair?code=${body.code}`));
   const r = await pair(body.code);
@@ -370,7 +370,7 @@ await test('the paired phone can submit IDs, recorded under its name', async () 
   aiNames = [];
   assert.equal((await upload('G2', phone)).status, 200);
   const w = (await call('/api/units/G2')).body.waitingIds[0];
-  assert.equal(w.uploaded_by, 'Security phone (Security – Lakshmi)');
+  assert.equal(w.uploaded_by, 'Anita');
 });
 await test('removing the phone locks it out at once', async () => {
   const { body } = await call('/api/devices');
@@ -379,7 +379,7 @@ await test('removing the phone locks it out at once', async () => {
   assert.equal((await call('/api/security', { cookie: phone })).status, 401);
 });
 await test('ten wrong codes cancel every open code', async () => {
-  const { body } = await call('/api/devices/pair', { method: 'POST', body: { label: 'Night guard' } });
+  const { body } = await call('/api/devices/pair', { method: 'POST', body: {} });
   const wrong = body.code === '000000' ? '111111' : '000000';
   for (let i = 0; i < 9; i++) assert.equal((await pair(wrong)).status, 400);
   assert.equal((await pair(wrong)).status, 429);

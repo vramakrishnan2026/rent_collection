@@ -231,7 +231,7 @@ export default {
     let user: User | null = await currentUser(request, env);
     if (!user) {
       const phone = await currentDevice(request, env);
-      if (phone) user = { email: `Security phone (${phone.label})`, role: 'security', name: phone.label, device: true };
+      if (phone) user = { email: phone.label, role: 'security', name: phone.label, device: true };
     }
     if (!user) {
       if (isApi) return error('Please sign in', 401);

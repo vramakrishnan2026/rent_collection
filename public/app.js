@@ -1,6 +1,9 @@
 // Challaghatta Home rent app. Plain JavaScript, no build step.
 // Owner: Home (dashboard) · Units · Payments · ☰ settings.
-// Security guard: one read-only screen with each unit's rent status.
+// Anita (who looks after the building): rent status and Add ID only.
+
+// The person who looks after the building and uses the rent-status / Add ID screens.
+const GUARD = 'Anita';
 
 const $app = document.getElementById('app');
 const $sheet = document.getElementById('sheet-root');
@@ -101,7 +104,7 @@ function shell(title, sub, body, tab) {
     ? `<nav class="tabs">
         <div class="brand"><span class="logo">⌂</span><div><b>Challaghatta Home</b><small>Rent collection</small></div></div>
         ${items.map(([k, i, s, l]) => `<a href="#/${k}" class="${tab === k ? 'on' : ''}"><span class="i">${i}</span><span class="s">${s}</span><span class="l">${l}</span></a>`).join('')}
-        <a href="#/security" class="lg-only ${tab === 'security' ? 'on' : ''}"><span class="i">◉</span><span class="l">Security view</span></a>
+        <a href="#/security" class="lg-only ${tab === 'security' ? 'on' : ''}"><span class="i">◉</span><span class="l">${GUARD}’s view</span></a>
         <div class="who"><span>${esc(me.name || me.email)}</span><a href="/auth/logout">Sign out</a></div>
       </nav>`
     : '';
@@ -202,10 +205,10 @@ async function viewHome() {
   const banners = [];
   if (!s.razorpay.configured) banners.push('Razorpay isn’t connected yet, so rent links are off. You can still record payments by hand.');
   else if (s.razorpay.mode === 'test') banners.push('Razorpay is in <b>test mode</b>: links take test payments only.' + (d.collected.testTotal ? ` ${inr(d.collected.testTotal)} of test payments are counted (clear them in Settings).` : ''));
-  if (d.idsWaiting?.length) banners.push(`📷 New ID photos from security to check: ${d.idsWaiting.map((w) => `<a href="#/unit/${esc(w.unit)}"><b>${esc(w.unit)}</b>${w.n > 1 ? ` (${w.n})` : ''}</a>`).join(', ')}`);
+  if (d.idsWaiting?.length) banners.push(`📷 New ID photos from ${GUARD} to check: ${d.idsWaiting.map((w) => `<a href="#/unit/${esc(w.unit)}"><b>${esc(w.unit)}</b>${w.n > 1 ? ` (${w.n})` : ''}</a>`).join(', ')}`);
   const noTenants = d.occupied === 0 && !d.pending.length;
 
-  headerExtra = `<a class="btn small" href="#/security">◉ Security view</a>`;
+  headerExtra = `<a class="btn small" href="#/security">◉ ${GUARD}’s view</a>`;
   shell(
     'Dashboard',
     `Challaghatta Home · ${fmtDate(d.today)}`,
@@ -368,7 +371,7 @@ async function viewUnit(code) {
   headerExtra = `<a class="icon-btn" href="#/units" title="Back">←</a>`;
   let body = '<div class="unit-cols"><div class="ucol">';
   if (d.waitingIds?.length) {
-    body += `<div class="card waiting"><div class="card-h"><h2>New IDs from security</h2><span class="chip upcoming">${d.waitingIds.length}</span></div><div class="list">${d.waitingIds
+    body += `<div class="card waiting"><div class="card-h"><h2>New IDs from ${GUARD}</h2><span class="chip upcoming">${d.waitingIds.length}</span></div><div class="list">${d.waitingIds
       .map(
         (w) => `<div class="row wrow"><div class="main"><div class="t">${w.names.length ? esc(w.names.join(', ')) : w.is_pdf ? 'PDF' : 'Name not read'}</div>
           <div class="d">${fmtDate(w.taken_at)} · ${new Date(w.taken_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · by ${esc(w.uploaded_by)} ·
@@ -463,7 +466,7 @@ async function viewUnit(code) {
       .join('')}</div></div>`;
   }
 
-  body += `<div class="card"><h2>Unit</h2><div class="row" style="padding:0"><div class="main"><div class="t">Rent-free unit</div><div class="d">For the security guard’s unit: no rent is charged.</div></div>
+  body += `<div class="card"><h2>Unit</h2><div class="row" style="padding:0"><div class="main"><div class="t">Rent-free unit</div><div class="d">For ${GUARD}’s unit: no rent is charged.</div></div>
     <input type="checkbox" data-rentfree ${unit.rent_free ? 'checked' : ''} style="width:1.4rem;height:1.4rem"></div></div>`;
 
   body += '</div></div>';
@@ -517,7 +520,7 @@ function wireUnit(d) {
       el.checked = false;
       return;
     }
-    await api(`/api/units/${encodeURIComponent(unit.code)}`, { method: 'PUT', body: { rent_free: el.checked, note: el.checked ? unit.note || 'Security' : unit.note === 'Security' ? '' : unit.note } }).catch((e) => toast(e.message));
+    await api(`/api/units/${encodeURIComponent(unit.code)}`, { method: 'PUT', body: { rent_free: el.checked, note: el.checked ? unit.note || GUARD : unit.note === GUARD ? '' : unit.note } }).catch((e) => toast(e.message));
     reload();
   });
   on('[data-refund]', (el) =>
@@ -716,10 +719,10 @@ async function viewMenu() {
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
       ${s.drive.connected ? '<button class="btn small" data-drive-off>Unlink</button>' : `<a class="btn small primary" href="/api/drive/connect" ${s.drive.configured ? '' : 'aria-disabled="true"'}>Link Google Drive</a>`}</div>
-    <div class="card"><div class="card-h"><h2>Security phones</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
-      <p class="note" style="margin-top:0">The guard’s phone signs in with a one-time code, no Gmail needed. It sees only rent status and Add ID.</p>
+    <div class="card"><div class="card-h"><h2>${GUARD}’s phone</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
+      <p class="note" style="margin-top:0">${GUARD}’s phone signs in with a one-time code, no Gmail needed. It sees only rent status and Add ID.</p>
       <div class="list" data-devices><p class="note">Loading…</p></div>
-      <a class="btn small" href="#/security" style="margin-top:.6rem">Open the security screen</a></div>
+      <a class="btn small" href="#/security" style="margin-top:.6rem">Open ${GUARD}’s screen</a></div>
     <div class="card"><h2>Data</h2><a class="btn small" href="/api/export" download>Download backup</a></div>
     <a class="btn block" href="/auth/logout">Sign out</a>`,
     'menu'
@@ -756,20 +759,20 @@ async function viewMenu() {
   loadDevices();
   $app.querySelector('[data-pair]').addEventListener('click', () =>
     openSheet(
-      `<h2>Add a security phone</h2><form>
-        <label class="f">Name for this phone <input name="label" maxlength="40" value="Security" placeholder="e.g. Security – Lakshmi"></label>
+      `<h2>Add ${GUARD}’s phone</h2><form>
+        <label class="f">Name for this phone <input name="label" maxlength="40" value="${GUARD}" placeholder="e.g. ${GUARD} – new phone"></label>
         <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Get code</button></div></form>`,
       async (v) => {
         const r = await api('/api/devices/pair', { method: 'POST', body: v });
-        const msg = `Challaghatta Home security app.\nOpen this link on your phone: ${r.link}\nOr open ${location.origin} and enter the code ${r.code}.`;
+        const msg = `Hi ${GUARD}, this is the Challaghatta Home app.\nOpen this link on your phone: ${r.link}\nOr open ${location.origin} and enter the code ${r.code}.`;
         const sheet = $sheet.querySelector('.sheet');
         sheet.innerHTML = `<h2>Code for ${esc(r.label)}</h2>
           <div class="paircode">${r.code.slice(0, 3)} ${r.code.slice(3)}</div>
           <p class="note" style="text-align:center">Works once, until ${new Date(r.expiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</p>
           <div class="actions" style="margin:.8rem 0"><a class="btn green" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Send on WhatsApp</a><button class="btn" data-copy>Copy link</button></div>
-          <div class="msg"><b>On her phone</b>
+          <div class="msg"><b>On ${GUARD}’s phone</b>
 • Android: open the link in Chrome, then ⋮ › Add to Home screen.
-• iPhone: open ${esc(location.host)} in Safari, Share › Add to Home Screen, open the new icon, tap “Security guard? Enter your code” and type the code.</div>
+• iPhone: open ${esc(location.host)} in Safari, Share › Add to Home Screen, open the new icon, tap “${GUARD}? Enter your code” and type the code.</div>
           <button class="btn block" data-close>Done</button>`;
         sheet.querySelector('[data-copy]').addEventListener('click', async () => {
           await navigator.clipboard.writeText(r.link).catch(() => {});

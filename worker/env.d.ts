@@ -47,7 +47,7 @@ export interface Env {
 
   // Who may sign in, comma-separated Gmail addresses (secrets):
   OWNER_EMAILS?: string;     // the whole app
-  SECURITY_EMAILS?: string;  // the security guard: read-only rent status
+  SECURITY_EMAILS?: string;  // Anita (optional, if she uses Gmail): rent status and Add ID only
 
   // Razorpay (test keys start rzp_test_, live keys rzp_live_)
   RAZORPAY_KEY_ID?: string;

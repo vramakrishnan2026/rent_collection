@@ -1,6 +1,6 @@
 import type { Env } from './env';
 import { NotFoundError, ValidationError, getSetting, setSetting, str } from './db.ts';
-import { b64url, cookie, esc, getCookie, redirect } from './auth.ts';
+import { GUARD, b64url, cookie, esc, getCookie, redirect } from './auth.ts';
 
 // Security phones without a Gmail login.
 // The owner makes a one-time 6-digit code (24 hours). On the guard's phone, the code (typed on the
@@ -41,7 +41,7 @@ export async function currentDevice(request: Request, env: Env): Promise<DeviceU
 // ---------- owner ----------
 
 export async function createPairCode(env: Env, body: any, origin: string) {
-  const label = str(body?.label, 40) || 'Security phone';
+  const label = str(body?.label, 40) || GUARD;
   const n = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000;
   const code = String(n).padStart(6, '0');
   const expires = new Date(Date.now() + CODE_HOURS * 3600_000).toISOString();
@@ -73,7 +73,7 @@ function pairPage(code: string, message: { kind: 'error' | 'info'; text: string 
   const html = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Security phone – Challaghatta Rent</title>
+<title>${GUARD} – Challaghatta Rent</title>
 <meta name="theme-color" content="#0B1120">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -93,7 +93,7 @@ function pairPage(code: string, message: { kind: 'error' | 'info'; text: string 
 </style></head>
 <body><main class="card">
   <div class="logo">⌂</div>
-  <h1>Security phone</h1>
+  <h1>Hello ${GUARD}</h1>
   <p class="sub">Enter the 6-digit code from the owner.<br><span lang="ne">मालिकले दिएको ६ अंकको कोड लेख्नुहोस्।</span></p>
   ${message ? `<p class="msg ${message.kind}" role="alert">${esc(message.text)}</p>` : ''}
   <form method="post" action="${PAIR_PATH}">
