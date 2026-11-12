@@ -368,7 +368,7 @@ async function viewUnit(code) {
   let body = '<div class="unit-cols"><div class="ucol">';
 
   if (!t) {
-    body = `<div class="card"><p style="margin-top:0">${unit.rent_free ? 'Rent-free unit. Add who lives here to keep their ID on file.' : 'No tenant right now.'}</p>
+    body += `<div class="card"><p style="margin-top:0">${unit.rent_free ? 'Rent-free unit. Add who lives here to keep their ID on file.' : 'No tenant right now.'}</p>
       <button class="btn primary block" data-act="add">Add tenant</button></div></div><div class="ucol">`;
   } else {
     const owe =
