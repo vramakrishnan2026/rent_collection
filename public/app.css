@@ -295,3 +295,13 @@ details.guide > a.btn.block { width: calc(100% - 2.2rem); }
 .existing-box { background: var(--soft); border-radius: .9rem; padding: .8rem .9rem .2rem; margin-bottom: .9rem; }
 .idbtns { display: flex; flex-direction: column; gap: .35rem; align-items: stretch; }
 .muted { color: var(--muted); }
+
+/* full-screen "please wait": blocks every touch until the upload finishes */
+#busy { position: fixed; inset: 0; z-index: 100; background: rgba(15, 23, 42, .55); display: flex; align-items: center; justify-content: center; padding: 1.5rem; touch-action: none; cursor: wait; }
+#busy[hidden] { display: none; }
+#busy .busy-card { background: var(--card); color: var(--text); border-radius: 1.3rem; padding: 1.6rem 1.5rem; max-width: 20rem; text-align: center; box-shadow: 0 20px 40px -12px rgba(0,0,0,.4); }
+#busy p { margin: .9rem 0 .3rem; font-weight: 800; font-size: 1.02rem; line-height: 1.35; }
+#busy small { color: var(--muted); font-size: .82rem; }
+.spinner { width: 2.8rem; height: 2.8rem; margin: 0 auto; border-radius: 50%; border: .3rem solid var(--soft); border-top-color: #16A34A; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }

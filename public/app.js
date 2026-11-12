@@ -8,6 +8,33 @@ const GUARD = 'Anita';
 const $app = document.getElementById('app');
 const $sheet = document.getElementById('sheet-root');
 const $toast = document.getElementById('toast');
+const $busy = document.getElementById('busy');
+
+/** Greys out the whole screen and blocks every tap until hideBusy(). */
+function showBusy(text, sub = '') {
+  $busy.querySelector('[data-busy-text]').textContent = text;
+  $busy.querySelector('[data-busy-sub]').textContent = sub;
+  $busy.hidden = false;
+  document.activeElement?.blur?.();
+}
+function hideBusy() {
+  $busy.hidden = true;
+}
+// While busy, swallow keys too (Enter/Space would otherwise press a focused button).
+document.addEventListener('keydown', (e) => { if (!$busy.hidden) { e.preventDefault(); e.stopPropagation(); } }, true);
+
+/** fetch that gives up after `ms` so the screen can never stay locked. */
+async function fetchWithTimeout(url, opts, ms = 90000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'It took too long. Check the internet and try again.' : 'No internet connection. Try again.');
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // ---------- helpers ----------
 
@@ -561,7 +588,6 @@ function wireUnit(d) {
   $app.querySelector('[data-id-first]')?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    toast('Uploading and reading the ID…', 20000);
     try {
       const data = await uploadIdFile(unit.code, file);
       toast('ID saved', 1500);
@@ -658,8 +684,6 @@ function wireUnit(d) {
     sheet.querySelector('[data-person-id-file]').addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const label = e.target.closest('label');
-      label.firstChild.textContent = 'Uploading and reading the ID…';
       try {
         const d = await uploadIdFile(unit.code, file);
         if (d.status === 'linked') {
@@ -675,7 +699,6 @@ function wireUnit(d) {
         await reload();
         confirmPerson(d);
       } catch (err) {
-        label.firstChild.textContent = '📷 From ID photo';
         sheet.querySelector('form').insertAdjacentHTML('afterbegin', `<div class="err">ID not saved: ${esc(err.message)}</div>`);
       }
     });
@@ -705,7 +728,6 @@ function wireUnit(d) {
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       if (!file) return;
-      toast('Uploading and reading the ID…', 20000);
       try {
         const back = input.dataset.side === 'back';
         const d = await uploadIdFile(unit.code, file, input.dataset.idFor, back ? 'back' : 'front');
@@ -748,6 +770,14 @@ function pinSheet(question, button, action) {
 
 /** Owner upload of one ID photo/PDF: saved to Drive, type/name/address read. personId = attach to that person. */
 async function uploadIdFile(unitCode, file, personId = null, side = 'front') {
+  showBusy('Saving the ID and reading the details…', 'Please wait. This can take up to a minute.');
+  try {
+    return await uploadIdFileInner(unitCode, file, personId, side);
+  } finally {
+    hideBusy();
+  }
+}
+async function uploadIdFileInner(unitCode, file, personId, side) {
   const form = new FormData();
   form.append('unit', unitCode);
   form.append('takenAt', new Date().toISOString());
@@ -760,7 +790,7 @@ async function uploadIdFile(unitCode, file, personId = null, side = 'front') {
     form.append('photo', p.photo, 'id.jpg');
     if (p.preview) form.append('preview', p.preview);
   }
-  const res = await fetch('/api/id-uploads', { method: 'POST', body: form });
+  const res = await fetchWithTimeout('/api/id-uploads', { method: 'POST', body: form });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || `Upload failed (${res.status})`);
   return data;
@@ -1009,6 +1039,7 @@ const GT = {
     review: 'Check the photo', reviewHint: 'Is the ID clear and the name easy to read?',
     retake: 'Retake', submit: 'Submit', lockNote: 'After you submit, the ID can’t be changed or deleted.',
     submitted: 'Submitted', uploading: 'Submitting…', saved: 'Saved', nameRead: 'Name', noName: 'Name not read. That’s OK, it’s saved.',
+    busy: 'Sending the ID and reading the details…', busySub: 'Please wait. Don’t close the app.',
     addrRead: 'address read ✓', backPaired: 'Back of card: address added ✓', backSaved: 'Back of card: address read. Saved.',
     failed: 'Failed. Tap to try again', driveMissing: 'Google Drive isn’t linked yet. Please tell the owner.', none: 'Nothing submitted yet.',
     guideTitle: 'How to add a tenant’s ID', guideStart: 'Add an ID now',
@@ -1039,6 +1070,7 @@ const GT = {
     review: 'फोटो जाँच गर्नुहोस्', reviewHint: 'परिचयपत्र स्पष्ट छ र नाम पढ्न सकिन्छ?',
     retake: 'फेरि खिच्नुहोस्', submit: 'पठाउनुहोस्', lockNote: 'पठाएपछि परिचयपत्र बदल्न वा मेटाउन सकिँदैन।',
     submitted: 'पठाइएका', uploading: 'पठाउँदै…', saved: 'सुरक्षित भयो', nameRead: 'नाम', noName: 'नाम पढ्न सकिएन। ठीक छ, फोटो सुरक्षित भयो।',
+    busy: 'परिचयपत्र पठाउँदै र विवरण पढ्दै…', busySub: 'कृपया पर्खनुहोस्। एप बन्द नगर्नुहोस्।',
     addrRead: 'ठेगाना पढियो ✓', backPaired: 'पछाडिको भाग: ठेगाना थपियो ✓', backSaved: 'पछाडिको भाग: ठेगाना पढियो। सुरक्षित भयो।',
     failed: 'असफल भयो। फेरि प्रयास गर्न थिच्नुहोस्', driveMissing: 'Google Drive अझै जोडिएको छैन। कृपया मालिकलाई भन्नुहोस्।', none: 'अहिलेसम्म केही पठाइएको छैन।',
     guideTitle: 'भाडावालको परिचयपत्र कसरी थप्ने', guideStart: 'अहिले परिचयपत्र थप्नुहोस्',
@@ -1243,6 +1275,7 @@ async function viewIds() {
 async function sendId(item) {
   item.status = 'uploading';
   item.error = '';
+  showBusy(gt().busy, gt().busySub);
   const redraw = () => location.hash.startsWith('#/ids') && viewIds().catch(() => {});
   redraw();
   try {
@@ -1257,7 +1290,7 @@ async function sendId(item) {
       form.append('photo', p.photo, 'id.jpg');
       if (p.preview) form.append('preview', p.preview);
     }
-    const res = await fetch('/api/id-uploads', { method: 'POST', body: form });
+    const res = await fetchWithTimeout('/api/id-uploads', { method: 'POST', body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       item.drive = data.error === 'drive_not_linked';
@@ -1273,6 +1306,8 @@ async function sendId(item) {
   } catch (e) {
     item.status = 'failed';
     if (!item.error) item.error = navigator.onLine === false ? 'No internet' : e?.message || '';
+  } finally {
+    hideBusy();
   }
   redraw();
 }
