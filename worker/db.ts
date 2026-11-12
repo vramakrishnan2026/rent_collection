@@ -312,10 +312,12 @@ export async function addUnit(db: D1Database, body: any) {
   return code;
 }
 
-export async function updateUnit(db: D1Database, code: string, body: any) {
+export async function updateUnit(db: D1Database, code: string, body: any, rentFreePin = '1234') {
   const unit = await db.prepare('SELECT * FROM units WHERE code = ?').bind(code).first<UnitRow>();
   if (!unit) throw new NotFoundError('Unit not found');
   const rentFree = body?.rent_free === undefined ? unit.rent_free : body.rent_free ? 1 : 0;
+  // Turning rent-free ON needs the PIN (checked here, never sent to the browser).
+  if (rentFree && !unit.rent_free && str(body?.pin, 20) !== rentFreePin) throw new ValidationError('Wrong PIN');
   const note = body?.note === undefined ? unit.note : str(body.note, 300) || null;
   await db.prepare('UPDATE units SET rent_free = ?, note = ? WHERE code = ?').bind(rentFree, note, code).run();
   if (rentFree) {

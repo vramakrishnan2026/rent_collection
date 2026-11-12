@@ -144,7 +144,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
       return json({ ...(await unitDetail(env.DB, code, today)), waitingIds: await waitingIds(env, code) });
     }
     if (seg.length === 2 && method === 'PUT') {
-      await updateUnit(env.DB, id.toUpperCase(), await readJson(request));
+      await updateUnit(env.DB, id.toUpperCase(), await readJson(request), env.RENT_FREE_PIN || '1234');
       return json({ success: true });
     }
   }

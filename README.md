@@ -79,11 +79,12 @@ Add these under Cloudflare › the Worker › **Settings › Variables and Secre
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | from step 3 (`rzp_test_…` for now) |
 | `RAZORPAY_WEBHOOK_SECRET` | the webhook secret from step 3 |
 | `SESSION_SECRET` | optional: any long random string |
+| `RENT_FREE_PIN` | optional: the PIN needed to make a unit rent-free (1234 if not set) |
 
 ### 5. In the app
 
 1. Sign in, then go to **☰ More › Link Google Drive** (for ID photos).
-2. Open Anita's unit and tick **Rent-free unit**.
+2. Open Anita's unit and, under **Unit › Rent-free unit**, tap **🔒 Turn on** and enter the PIN.
 3. Add tenants from **Units**.
 
 ## Going live (after Razorpay KYC)

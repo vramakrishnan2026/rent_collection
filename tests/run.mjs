@@ -159,7 +159,9 @@ await test('security guard sees months pending, never amounts, and nothing else'
   assert.equal((await call('/api/payments', { cookie: guard, method: 'POST', body: {} })).status, 403);
 });
 await test('rent-free unit for the security guard', async () => {
-  assert.equal((await call('/api/units/T6', { method: 'PUT', body: { rent_free: true, note: 'Security' } })).status, 200);
+  assert.equal((await call('/api/units/T6', { method: 'PUT', body: { rent_free: true, note: 'Security' } })).status, 400, 'needs the PIN');
+  assert.equal((await call('/api/units/T6', { method: 'PUT', body: { rent_free: true, pin: '0000' } })).status, 400, 'wrong PIN');
+  assert.equal((await call('/api/units/T6', { method: 'PUT', body: { rent_free: true, pin: '1234', note: 'Security' } })).status, 200);
   const r = await call('/api/tenancies', { method: 'POST', body: { unit_code: 'T6', contact_name: 'Guard', start_date: start, base_rent: 9000 } });
   assert.equal(r.status, 201);
   const { body } = await call('/api/security', { cookie: guard });

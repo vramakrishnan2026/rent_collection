@@ -54,6 +54,9 @@ export interface Env {
   RAZORPAY_KEY_SECRET?: string;
   RAZORPAY_WEBHOOK_SECRET?: string;
 
+  // PIN needed to make a unit rent-free (default 1234; set this secret to change it)
+  RENT_FREE_PIN?: string;
+
   // Tests only: pretend today is this date (YYYY-MM-DD)
   TEST_TODAY?: string;
 

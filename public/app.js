@@ -474,8 +474,9 @@ async function viewUnit(code) {
       .join('')}</div></div>`;
   }
 
-  body += `<div class="card"><h2>Unit</h2><div class="row" style="padding:0"><div class="main"><div class="t">Rent-free unit</div><div class="d">For ${GUARD}’s unit: no rent is charged.</div></div>
-    <input type="checkbox" data-rentfree ${unit.rent_free ? 'checked' : ''} style="width:1.4rem;height:1.4rem"></div></div>`;
+  body += `<div class="card"><h2>Unit</h2><div class="row" style="padding:0"><div class="main"><div class="t">Rent-free unit</div>
+    <div class="d">${unit.rent_free ? '<span class="chip free">On</span>' : '<span class="chip vacant">Off</span>'}</div></div>
+    ${unit.rent_free ? '<button class="btn small" data-rentfree-off>Turn off</button>' : '<button class="btn small" data-rentfree-on>🔒 Turn on</button>'}</div></div>`;
 
   body += '</div></div>';
   shell(`${esc(unit.code)}`, `${esc(unit.floor)} floor${unit.note ? ' · ' + esc(unit.note) : ''}`, body, 'units');
@@ -543,12 +544,23 @@ function wireUnit(d) {
       e.target.value = '';
     }
   });
-  on('[data-rentfree]', async (el) => {
-    if (el.checked && t && !confirm(`Make ${unit.code} rent-free? The current tenant’s rent will be set to ₹0.`)) {
-      el.checked = false;
-      return;
-    }
-    await api(`/api/units/${encodeURIComponent(unit.code)}`, { method: 'PUT', body: { rent_free: el.checked, note: el.checked ? unit.note || GUARD : unit.note === GUARD ? '' : unit.note } }).catch((e) => toast(e.message));
+  on('[data-rentfree-on]', () =>
+    openSheet(
+      `<h2>Make ${esc(unit.code)} rent-free</h2><form>
+        <label class="f">PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required maxlength="20"></label>
+        ${t ? `<p class="note">${esc(t.contact_name)}’s rent will be set to ₹0.</p>` : ''}
+        <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Turn on</button></div></form>`,
+      async (v) => {
+        await api(`/api/units/${encodeURIComponent(unit.code)}`, { method: 'PUT', body: { rent_free: true, pin: v.pin, note: unit.note || GUARD } });
+        closeSheet();
+        toast(`${unit.code} is now rent-free`);
+        reload();
+      }
+    )
+  );
+  on('[data-rentfree-off]', async () => {
+    if (!confirm(`Turn off rent-free for ${unit.code}? Rent will be charged from now; set the tenant’s rent in Edit details.`)) return;
+    await api(`/api/units/${encodeURIComponent(unit.code)}`, { method: 'PUT', body: { rent_free: false, note: unit.note === GUARD ? '' : unit.note } }).catch((e) => toast(e.message));
     reload();
   });
   on('[data-settle]', (el) => settleSheet(el.dataset.settle, reload));
