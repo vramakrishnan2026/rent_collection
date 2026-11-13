@@ -114,6 +114,15 @@ Secret **values** are only in Cloudflare, never in this repo.
 - **Bulk edit.** A table of all units for editing many at once: new rent plus from-date, next 5% date, deposit, phone. Show a summary of the changes, ask for the PIN once, and make it easy on a laptop (cards on a phone). The owner may do this later with Claude.
 - (Fixed already: the Ask chat once replied as though it had changed rents. It's now explicitly read-only, and the server adds a notice to any change request.)
 
+- **Option: Razorpay Subscriptions (UPI AutoPay) as a hybrid.** The owner tested a ₹1 monthly subscription on 13 Nov 2026.
+  - Drawbacks, which are why it isn't a replacement:
+    - Autopay without approving each debit only works up to ₹15,000 for rent.
+    - It costs about 0.9–0.99% on top of 2% + GST.
+    - It charges a fixed amount, which doesn't fit part months, 5% increases or catching up arrears.
+    - Tenants must agree, and can cancel any time.
+    - It ends after a set number of cycles.
+  - If wanted: the app creates each willing tenant's subscription with the right amount and marks months paid from `subscription.charged` webhooks. Everyone else stays on links or direct UPI.
+
 Also mentioned, lower priority:
 - Reading PDFs (ID PDFs and rental agreements, via Workers AI's document-to-text conversion).
 - Matching bank credit-alert emails (Cloudflare Email Workers).
