@@ -19,7 +19,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - **One month's rent is kept for maintenance** (you can change the amount), and any rent still owed is taken from the rest. The app records that as a payment.
   - The refund is what's left.
   - Anything the deposit doesn't cover stays on the pending list.
-- **Rent links:** tap **Send link** to create a Razorpay Payment Link for every month that has ended and isn't paid (from the 1st, last month's rent can be collected). Then tap **WhatsApp** or **SMS** to send it from your phone, with the message ready. When the tenant pays, Razorpay's webhook records the payment. A 9 AM daily check catches anything the webhook missed.
+- **Rent links:** tap **Send link** to create a Razorpay Payment Link for every month that has ended and isn't paid (from the 1st, last month's rent can be collected). Then tap **WhatsApp** or **SMS** to send it from your phone, with the message ready. When the tenant pays, Razorpay's webhook records the payment. A 9 AM daily check catches anything the webhook missed. An open unit page with an unpaid link re-checks itself every 30 seconds (and when you come back to the tab), so the payment shows without leaving the page.
 - **Send all (📤 Send links):** one screen that goes through every tenant who owes rent for a month that has ended.
   - Tap **WhatsApp** and the chat opens with the message and link ready. Tap Send in WhatsApp and come back: the next tenant is ready. SMS is there for anyone without WhatsApp.
   - It shows how many are sent this month, and lets you skip or resend.
