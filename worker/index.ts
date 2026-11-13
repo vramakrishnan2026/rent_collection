@@ -64,11 +64,15 @@ function drivePage(ok: boolean, message: string) {
   });
 }
 
-/** The owner's PIN for protected actions (rent-free, deleting payments). Default 1234. */
+/**
+ * The owner's PIN for critical actions: making a unit rent-free, deleting payments, removing a phone,
+ * linking/unlinking Google Drive and downloading the backup. Default 1234.
+ */
 const ownerPin = (env: Env) => env.OWNER_PIN || env.RENT_FREE_PIN || '1234';
-async function requirePin(request: Request, env: Env) {
+async function requirePin(request: Request, env: Env): Promise<any> {
   const body: any = await request.json().catch(() => ({}));
   if (String(body?.pin ?? '').trim() !== ownerPin(env)) throw new ValidationError('Wrong PIN');
+  return body;
 }
 
 async function handleApi(request: Request, env: Env, url: URL, user: User): Promise<Response> {
@@ -91,10 +95,14 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   if (user.role !== 'owner') return error('Not allowed', 403);
 
   // ---- Google Drive link for tenant IDs
-  if (pathname === drive.CONNECT_PATH && method === 'GET') {
+  // Linking needs the PIN: a different Google account would send ID photos to someone else's Drive.
+  if (pathname === drive.CONNECT_PATH && method === 'POST') {
+    await requirePin(request, env);
     if (!drive.isConfigured(env)) return error('Google isn’t set up on the server', 503);
     const state = crypto.randomUUID();
-    return redirect(drive.authUrl(env, url.origin, state), [cookie(drive.STATE_COOKIE, state, 600, '/api/drive')]);
+    const res = json({ url: drive.authUrl(env, url.origin, state) });
+    res.headers.append('Set-Cookie', cookie(drive.STATE_COOKIE, state, 600, '/api/drive'));
+    return res;
   }
   if (pathname === drive.CALLBACK_PATH && method === 'GET') {
     const code = url.searchParams.get('code');
@@ -108,6 +116,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
     }
   }
   if (pathname === '/api/drive/disconnect' && method === 'POST') {
+    await requirePin(request, env);
     await drive.disconnect(env);
     return json({ success: true });
   }
@@ -135,6 +144,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
     return json({ success: true });
   }
   if (pathname.startsWith('/api/devices/') && method === 'DELETE') {
+    await requirePin(request, env);
     await removeDevice(env, decodeURIComponent(pathname.slice('/api/devices/'.length)));
     return json({ success: true });
   }
@@ -148,7 +158,8 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
     return json({ today, units, former });
   }
   if (pathname === '/api/units' && method === 'POST') return json({ success: true, code: await addUnit(env.DB, await readJson(request)) }, 201);
-  if (pathname === '/api/export' && method === 'GET') {
+  if (pathname === '/api/export' && method === 'POST') {
+    await requirePin(request, env); // every tenant's name, phone and address
     return new Response(JSON.stringify(await exportAll(env.DB), null, 2), {
       headers: {
         'Content-Type': 'application/json',

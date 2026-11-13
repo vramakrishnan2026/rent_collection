@@ -1108,17 +1108,17 @@ async function viewMenu() {
       <p class="note">Webhook URL (Razorpay › Webhooks, event <b>payment_link.paid</b>):</p>
       <p class="mono">${esc(s.webhookUrl)}</p>
       <p class="note">Webhook secret: <b>${rz.webhook ? 'set' : 'not set (add RAZORPAY_WEBHOOK_SECRET)'}</b>. Without it, payments are still picked up by a daily check at 9 AM, or when you tap Check.</p>
-      <button class="btn small danger" data-clear-test>Delete test payments</button></div>
+      <button class="btn small danger" data-clear-test>🔒 Delete test payments</button></div>
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
-      ${s.drive.connected ? '<button class="btn small" data-drive-off>Unlink</button>' : `<a class="btn small primary" href="/api/drive/connect" ${s.drive.configured ? '' : 'aria-disabled="true"'}>Link Google Drive</a>`}</div>
+      ${s.drive.connected ? '<button class="btn small" data-drive-off>🔒 Unlink</button>' : `<button class="btn small primary" data-drive-on ${s.drive.configured ? '' : 'disabled'}>🔒 Link Google Drive</button>`}</div>
     <div class="card"><h2>Reminders on this phone</h2><div data-push><p class="note" style="margin-top:0">Checking…</p></div></div>
     <div class="card"><h2>Reading IDs</h2>${idReadingHtml(s.idReading)}</div>
     <div class="card"><div class="card-h"><h2>${GUARD}’s phone</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
       <p class="note" style="margin-top:0">${GUARD}’s phone signs in with a one-time code, no Gmail needed. It sees only rent status and Add ID.</p>
       <div class="list" data-devices><p class="note">Loading…</p></div>
       <a class="btn small" href="#/security" style="margin-top:.6rem">Open ${GUARD}’s screen</a></div>
-    <div class="card"><h2>Data</h2><a class="btn small" href="/api/export" download>Download backup</a></div>
+    <div class="card"><h2>Data</h2><button class="btn small" data-export>🔒 Download backup</button></div>
     <a class="btn block" href="/auth/logout">Sign out</a>`,
     'menu'
   );
@@ -1134,17 +1134,19 @@ async function viewMenu() {
             .map(
               (d) => `<div class="row"><span class="code">📱</span><div class="main"><div class="t">${esc(d.label)}</div>
               <div class="d">Added ${fmtDate(d.created_at)}${d.last_seen ? ` · last used ${ago(d.last_seen)}` : ''}</div></div>
-              <button class="btn small danger" data-unpair="${esc(d.id)}" data-label="${esc(d.label)}">Remove</button></div>`
+              <button class="btn small danger" data-unpair="${esc(d.id)}" data-label="${esc(d.label)}">🔒 Remove</button></div>`
             )
             .join('')
         : '<p class="note">No phones paired yet.</p>') +
       (r.openCodes.length ? `<p class="note">${plural(r.openCodes.length, 'code')} waiting to be used. <a href="#" data-cancel-codes>Cancel</a></p>` : '');
     box.querySelectorAll('[data-unpair]').forEach((b) =>
-      b.addEventListener('click', async () => {
-        if (!confirm(`Remove ${b.dataset.label}? That phone is signed out straight away.`)) return;
-        await api(`/api/devices/${encodeURIComponent(b.dataset.unpair)}`, { method: 'DELETE' }).catch((e) => toast(e.message));
-        loadDevices();
-      })
+      b.addEventListener('click', () =>
+        pinSheet(`Remove ${b.dataset.label}? That phone is signed out straight away and needs a new code to get back in.`, 'Remove phone', async (pin) => {
+          await api(`/api/devices/${encodeURIComponent(b.dataset.unpair)}`, { method: 'DELETE', body: { pin } });
+          toast(`${b.dataset.label} removed`);
+          loadDevices();
+        })
+      )
     );
     box.querySelector('[data-cancel-codes]')?.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -1184,10 +1186,32 @@ async function viewMenu() {
       toast(`${plural(r.deleted, 'test payment')} deleted`);
     })
   );
-  $app.querySelector('[data-drive-off]')?.addEventListener('click', async () => {
-    await api('/api/drive/disconnect', { method: 'POST', body: {} });
-    viewMenu();
-  });
+  $app.querySelector('[data-drive-off]')?.addEventListener('click', () =>
+    pinSheet('Unlink Google Drive? New ID photos can’t be saved until it’s linked again.', 'Unlink', async (pin) => {
+      await api('/api/drive/disconnect', { method: 'POST', body: { pin } });
+      toast('Google Drive unlinked');
+      viewMenu();
+    })
+  );
+  $app.querySelector('[data-drive-on]')?.addEventListener('click', () =>
+    pinSheet('Link Google Drive for tenant ID photos', 'Continue to Google', async (pin) => {
+      const r = await api('/api/drive/connect', { method: 'POST', body: { pin } });
+      location.href = r.url;
+    })
+  );
+  $app.querySelector('[data-export]').addEventListener('click', () =>
+    pinSheet('Download a backup of all tenants, payments and IDs?', 'Download', async (pin) => {
+      const res = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Error ${res.status}`);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `challaghatta-rent-${todayIST()}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('Backup downloaded');
+    })
+  );
 }
 
 // ---------- security guard: rent status + Add ID (English / Nepali) ----------

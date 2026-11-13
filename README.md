@@ -88,7 +88,7 @@ Add these under Cloudflare › the Worker › **Settings › Variables and Secre
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | from step 3 (`rzp_test_…` for now) |
 | `RAZORPAY_WEBHOOK_SECRET` | the webhook secret from step 3 |
 | `SESSION_SECRET` | optional: any long random string |
-| `OWNER_PIN` | optional: the PIN for protected actions (making a unit rent-free, deleting payments). 1234 if not set |
+| `OWNER_PIN` | optional: the PIN for critical actions (making a unit rent-free, deleting payments, removing a phone, linking or unlinking Google Drive, downloading the backup). 1234 if not set |
 
 ### 5. In the app
 

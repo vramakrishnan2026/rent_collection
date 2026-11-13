@@ -598,7 +598,8 @@ await test('the paired phone can submit IDs, recorded under its name', async () 
 await test('removing the phone locks it out at once', async () => {
   const { body } = await call('/api/devices');
   assert.equal(body.devices.length, 1);
-  assert.equal((await call(`/api/devices/${body.devices[0].id}`, { method: 'DELETE' })).status, 200);
+  assert.equal((await call(`/api/devices/${body.devices[0].id}`, { method: 'DELETE' })).status, 400, 'needs the PIN');
+  assert.equal((await call(`/api/devices/${body.devices[0].id}`, { method: 'DELETE', body: { pin: '1234' } })).status, 200);
   assert.equal((await call('/api/security', { cookie: phone })).status, 401);
 });
 await test('ten wrong codes cancel every open code', async () => {
@@ -607,6 +608,19 @@ await test('ten wrong codes cancel every open code', async () => {
   for (let i = 0; i < 9; i++) assert.equal((await pair(wrong)).status, 400);
   assert.equal((await pair(wrong)).status, 429);
   assert.equal((await pair(body.code)).status, 400, 'the real code no longer works');
+});
+
+await test('Settings: Drive link/unlink and the backup need the PIN', async () => {
+  assert.equal((await call('/api/drive/connect', { method: 'POST', body: {} })).status, 400);
+  const c = await call('/api/drive/connect', { method: 'POST', body: { pin: '1234' } });
+  assert.ok(c.body.url.startsWith('https://accounts.google.com/'));
+  assert.match(c.res.headers.get('Set-Cookie'), /cr_drive_state=/);
+  assert.equal((await call('/api/drive/disconnect', { method: 'POST', body: { pin: '0000' } })).status, 400);
+  assert.equal((await call('/api/export', { method: 'POST', body: {} })).status, 400);
+  const ex = await call('/api/export', { method: 'POST', body: { pin: '1234' } });
+  assert.equal(ex.status, 200);
+  assert.ok(Array.isArray(ex.body.tenancies));
+  assert.equal((await call('/api/devices/pair', { method: 'POST', body: { label: 'Anita' } })).status, 200, 'adding a phone needs no PIN');
 });
 
 globalThis.fetch = realFetch;
