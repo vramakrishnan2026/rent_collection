@@ -92,6 +92,25 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Automatic matching of bank credit-alert emails.
    - Kannada or Hindi for Anita.
 
+## Next features the owner liked (not built yet)
+
+These come from a discussion of Cloudflare AI features on 13 Nov 2026.
+
+1. **Reading payment screenshots, plus direct UPI.**
+   - Add a free "pay by UPI to the owner's account" option alongside the Razorpay link (no gateway fee).
+   - When a tenant sends a UPI payment screenshot, the owner (and maybe Anita) uploads it. The vision model already used for IDs (Llama 4 Scout on Workers AI) reads the amount, date, UTR/reference and payer. The app then matches the tenant and records the payment (method `upi`, UTR as the reference).
+   - Same approach as the IDs: guard against duplicates (the same UTR twice), and send anything unclear to review instead of guessing.
+   - **Needs:** the UPI ID the rent should go to.
+2. **Asking the data questions** (chat on the dashboard, owner only).
+   - Examples: "Who's more than 2 months behind?", "How much did the First floor pay this year?", "When is F3's next increase?"
+   - The model must only **read**, and work through the app's existing rules (`worker/rent.ts` and `db.ts`), with no raw database access, so answers match the screens.
+
+Also mentioned, lower priority:
+- Reading PDFs (ID PDFs and rental agreements, via Workers AI's document-to-text conversion).
+- Matching bank credit-alert emails (Cloudflare Email Workers).
+- Nepali voice notes from Anita (Whisper).
+- A monthly summary on the 11th.
+
 ## Working on it
 
 - `npm test` runs the rules and API tests (Node 22+, no install).
