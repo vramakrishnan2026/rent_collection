@@ -30,6 +30,10 @@ import { WEBHOOK_PATH, handleWebhook, linkForTenancy, markSent, razorpayStatus, 
 import { todayIST } from './rent.ts';
 import { PAIR_PATH, cancelCodes, createPairCode, currentDevice, handlePair, listDevices, removeDevice } from './devices.ts';
 import { lastRead } from './idread.ts';
+import { handleScreenshot } from './screenshot.ts';
+import { ask } from './ask.ts';
+import { getUpi } from './razorpay.ts';
+import { setSetting } from './db.ts';
 import { collectQueue, pushKey, rentReminders, subscribe, unsubscribe, notifyOwners } from './collect.ts';
 import { attachUpload, attachWaiting, dismissUpload, handleIdUpload, waitingByUnit, waitingIds } from './ids.ts';
 
@@ -121,6 +125,22 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
     return json({ success: true });
   }
 
+  // Ask your data (read-only summary + AI)
+  if (pathname === '/api/ask' && method === 'POST') return json(await ask(env, await readJson(request), today));
+
+  // UPI payment screenshots: read, and record straight away when everything checks out
+  if (pathname === '/api/payments/screenshot' && method === 'POST') return json(await handleScreenshot(request, env, user.email, today));
+
+  // The owner's UPI ID for direct payments (PIN: it decides where tenants send money)
+  if (pathname === '/api/settings/upi' && method === 'PUT') {
+    const body = await requirePin(request, env);
+    const id = String(body?.upi_id ?? '').trim();
+    if (id && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z][a-zA-Z0-9.\-]{1,64}$/.test(id)) throw new ValidationError('That doesn’t look like a UPI ID (e.g. name@okhdfcbank)');
+    await setSetting(env.DB, 'upi_id', id || null);
+    await setSetting(env.DB, 'upi_name', String(body?.upi_name ?? '').trim().slice(0, 60) || null);
+    return json({ success: true, upi: await getUpi(env.DB) });
+  }
+
   // "Send all" queue and reminders on this phone
   if (pathname === '/api/collect' && method === 'GET') return json(await collectQueue(env, today));
   if (pathname === '/api/push/key' && method === 'GET') return json(await pushKey(env));
@@ -150,7 +170,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   }
 
   if (pathname === '/api/settings' && method === 'GET') {
-    return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env), idReading: { connected: Boolean(env.AI), last: await lastRead(env) } });
+    return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env), idReading: { connected: Boolean(env.AI), last: await lastRead(env) }, upi: await getUpi(env.DB) });
   }
   if (pathname === '/api/dashboard' && method === 'GET') return json({ ...(await dashboard(env.DB, today)), idsWaiting: await waitingByUnit(env) });
   if (pathname === '/api/units' && method === 'GET') {

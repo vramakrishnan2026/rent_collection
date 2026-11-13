@@ -260,6 +260,10 @@ async function viewHome() {
       <div class="kpi ${d.pendingTotal > 0 ? 'red' : ''}"><div class="l">Pending</div><div class="v">${inr(d.pendingTotal)}</div><div class="s">${d.pendingUnits ? `${plural(d.pendingUnits, 'tenant')} behind` : 'Everyone is up to date'}</div></div>
       <div class="kpi"><div class="l">Deposits held</div><div class="v">${inr(d.depositsHeld)}</div><div class="s">Refundable advances</div></div>
     </div>
+    <div class="card ask"><div class="card-h"><h2>💬 Ask about your rent</h2></div>
+      <div class="ask-log" data-ask-log>${askLog.map(askBubble).join('')}</div>
+      <form data-ask class="ask-form"><input name="q" maxlength="500" placeholder="e.g. Who is more than 2 months behind?" autocomplete="off"><button class="btn primary" type="submit">Ask</button></form>
+      <div class="ask-tips">${['Who owes rent?', 'How much did the First floor pay this year?', 'Whose 5% increase is next?', 'Which IDs are missing?'].map((t) => `<button class="fchip" data-ask-tip>${t}</button>`).join('')}</div></div>
     <div class="dash-grid">
       <div class="card"><div class="card-h"><h2>${fyLabel}: due vs collected</h2><div class="legend"><span><i style="background:var(--soft);border:1px dashed var(--muted)"></i>Fell due</span><span><i style="background:var(--green)"></i>Collected</span></div></div>${chart}</div>
       <div class="card"><div class="card-h"><h2>Occupancy</h2><span class="big">${d.occupied}<small>/${d.rentableUnits}</small></span></div>
@@ -274,6 +278,41 @@ async function viewHome() {
     'home'
   );
 }
+
+// ---------- Ask about your rent ----------
+
+const askLog = []; // this visit only
+const askBubble = (m) => `<div class="bubble ${m.role}">${esc(m.content).replace(/\n/g, '<br>')}</div>`;
+document.addEventListener('submit', async (e) => {
+  const form = e.target.closest('[data-ask]');
+  if (!form) return;
+  e.preventDefault();
+  const q = form.q.value.trim();
+  if (!q) return;
+  const log = $app.querySelector('[data-ask-log]');
+  const history = askLog.slice(-6);
+  askLog.push({ role: 'user', content: q });
+  form.q.value = '';
+  log.insertAdjacentHTML('beforeend', askBubble({ role: 'user', content: q }) + '<div class="bubble assistant thinking">Thinking…</div>');
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/ask', { method: 'POST', body: { question: q, history } });
+    askLog.push({ role: 'assistant', content: r.answer });
+  } catch (err) {
+    askLog.push({ role: 'assistant', content: `Sorry: ${err.message}` });
+  }
+  btn.disabled = false;
+  const live = $app.querySelector('[data-ask-log]');
+  if (live) live.innerHTML = askLog.map(askBubble).join('');
+});
+document.addEventListener('click', (e) => {
+  const tip = e.target.closest('[data-ask-tip]');
+  if (!tip) return;
+  const form = $app.querySelector('[data-ask]');
+  form.q.value = tip.textContent;
+  form.requestSubmit();
+});
 
 // ---------- owner: send rent link ----------
 
@@ -512,7 +551,7 @@ async function viewUnit(code) {
       }</div></div>
       ${t.links.length ? `<div class="card"><h2>Rent links</h2><div class="list">${t.links
         .map(
-          (l) => `<div class="row"><div class="main"><div class="t">${inr(l.amount)} <span class="chip ${l.status === 'paid' ? 'paid' : l.status === 'created' ? 'upcoming' : 'vacant'}">${l.status === 'created' ? 'Unpaid' : esc(l.status)}</span></div>
+          (l) => `<div class="row"><div class="main"><div class="t">${inr(l.amount)} <span class="chip ${l.status === 'paid' ? 'paid' : l.status === 'created' ? 'upcoming' : 'vacant'}">${l.status === 'created' ? 'Unpaid' : l.status === 'upi' ? 'UPI message' : esc(l.status)}</span></div>
           <div class="d">${esc(l.description)} · made ${fmtDate(l.created_at)}${l.sent_at ? ` · sent on ${esc(l.sent_via)} ${ago(l.sent_at)}` : ''}</div></div>
           ${l.status === 'created' ? `<button class="btn small" data-refresh="${esc(l.id)}">Check</button>` : ''}</div>`
         )
@@ -866,23 +905,73 @@ async function settleSheet(tenancyId, done) {
   });
 }
 
-function paymentSheet(tenancyId, amount, done) {
-  openSheet(
+/**
+ * Record payment. `tenancyId` null → choose the tenant in the form (from a screenshot that didn't say who).
+ * `prefill` comes from a screenshot that couldn't be recorded on its own: amount, date, UTR and the reasons.
+ */
+async function paymentSheet(tenancyId, amount, done, prefill = null) {
+  let chooser = '';
+  if (!tenancyId) {
+    const { units, former } = await api('/api/units');
+    const opts = [
+      ...units.filter((u) => u.tenancy && !u.rent_free).map((u) => [u.tenancy.id, `${u.code} · ${u.tenancy.contact_name}`]),
+      ...former.map((t) => [t.id, `${t.unit_code} · ${t.contact_name} (moved out)`]),
+    ];
+    chooser = `<label class="f">Tenant <select name="tenancy_id" required><option value="">Choose…</option>${opts
+      .map(([id, label]) => `<option value="${esc(id)}" ${prefill?.tenancyId === id ? 'selected' : ''}>${esc(label)}</option>`)
+      .join('')}</select></label>`;
+  }
+  const r = prefill?.read || {};
+  const sheet = openSheet(
     `<h2>Record payment</h2><form>
-      <div class="two"><label class="f">Amount (₹) <input name="amount" inputmode="numeric" required value="${esc(amount || '')}"></label>
-      <label class="f">Date paid <input type="date" name="paid_on" required max="${todayIST()}" value="${todayIST()}"></label></div>
+      ${prefill ? `<div class="banner"><b>Check before saving.</b> ${prefill.reasons.map(esc).join(' ')}</div>` : `<label class="btn green block" style="margin-bottom:.8rem">📷 From UPI screenshot<input type="file" accept="image/*" data-shot hidden></label>`}
+      ${chooser}
+      <div class="two"><label class="f">Amount (₹) <input name="amount" inputmode="numeric" required value="${esc(r.amount ?? amount ?? '')}"></label>
+      <label class="f">Date paid <input type="date" name="paid_on" required max="${todayIST()}" value="${esc(r.date && r.date <= todayIST() ? r.date : todayIST())}"></label></div>
       <label class="f">How <select name="method">${Object.entries(METHOD).map(([k, v]) => `<option value="${k}" ${k === 'upi' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-      <label class="f">Reference <small>(UTR / cheque no., optional)</small><input name="reference" maxlength="80"></label>
-      <label class="f">Note <input name="note" maxlength="300"></label>
+      <label class="f">Reference <small>(UTR / cheque no., optional)</small><input name="reference" maxlength="80" value="${esc(r.utr || '')}"></label>
+      <label class="f">Note <input name="note" maxlength="300" value="${prefill ? `From screenshot${r.payer ? ` · paid by ${esc(r.payer)}` : ''}` : ''}"></label>
       <p class="note">Part payments are fine: they clear the oldest month first.</p>
       <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`,
     async (v) => {
-      await api('/api/payments', { method: 'POST', body: { ...v, amount: String(v.amount).replace(/[,₹\s]/g, ''), tenancy_id: tenancyId } });
+      await api('/api/payments', { method: 'POST', body: { ...v, amount: String(v.amount).replace(/[,₹\s]/g, ''), tenancy_id: tenancyId || v.tenancy_id } });
       closeSheet();
       toast('Payment recorded');
       done();
     }
   );
+  sheet.querySelector('[data-shot]')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) fromScreenshot(file, tenancyId, done);
+  });
+}
+
+/** Reads a UPI screenshot; records it straight away if everything checks out, else opens the form pre-filled. */
+async function fromScreenshot(file, tenancyId, done) {
+  showBusy('Reading the payment screenshot…', 'Please wait.');
+  let d;
+  try {
+    const p = await preparePhoto(file);
+    const form = new FormData();
+    form.append('photo', p.photo, 'screenshot.jpg');
+    form.append('preview', p.preview);
+    if (tenancyId) form.append('tenancy_id', tenancyId);
+    const res = await fetchWithTimeout('/api/payments/screenshot', { method: 'POST', body: form });
+    d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || `Error ${res.status}`);
+  } catch (e) {
+    hideBusy();
+    toast(`Screenshot not read: ${e.message}`, 6000);
+    return;
+  }
+  hideBusy();
+  closeSheet();
+  if (d.recorded) {
+    toast(`${inr(d.read.amount)} from ${d.name} (${d.unit}) recorded · ${fmtDate(d.read.date)} · UTR ${d.read.utr}`, 6000);
+    done();
+  } else {
+    paymentSheet(d.tenancyId || tenancyId, null, done, d);
+  }
 }
 
 /** Resizes photos to at most 1800px (keeps uploads fast); PDFs go as they are. */
@@ -911,7 +1000,7 @@ async function viewPayments(month) {
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const rows = await api(`/api/payments?from=${month}-01&to=${month}-${String(last).padStart(2, '0')}`);
   const total = rows.reduce((a, p) => a + p.amount, 0);
-  headerExtra = `<input type="month" value="${month}" data-month class="btn small" style="padding:.45rem .6rem">`;
+  headerExtra = `<label class="btn small primary">📷 From screenshot<input type="file" accept="image/*" data-pay-shot hidden></label><button class="btn small" data-pay-new>＋ Record</button><input type="month" value="${month}" data-month class="btn small" style="padding:.45rem .6rem">`;
   shell(
     'Payments',
     `${monthOf(month)} · ${inr(total)} from ${plural(rows.length, 'payment')}`,
@@ -934,6 +1023,12 @@ async function viewPayments(month) {
     'payments'
   );
   $app.querySelector('[data-month]').addEventListener('change', (e) => e.target.value && viewPayments(e.target.value));
+  $app.querySelector('[data-pay-shot]').addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) fromScreenshot(file, null, () => viewPayments(month));
+    e.target.value = '';
+  });
+  $app.querySelector('[data-pay-new]').addEventListener('click', () => paymentSheet(null, null, () => viewPayments(month)));
 }
 
 // ---------- reminders (web push) ----------
@@ -1112,6 +1207,9 @@ async function viewMenu() {
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
       ${s.drive.connected ? '<button class="btn small" data-drive-off>🔒 Unlink</button>' : `<button class="btn small primary" data-drive-on ${s.drive.configured ? '' : 'disabled'}>🔒 Link Google Drive</button>`}</div>
+    <div class="card"><h2>Direct UPI payments</h2>
+      <p class="note" style="margin-top:0">${s.upi ? `Rent messages also say: pay by UPI to <b>${esc(s.upi.id)}</b>${s.upi.name ? ` (${esc(s.upi.name)})` : ''}. No gateway fee. Record those payments with 📷 From screenshot.` : 'Not set. Add your UPI ID and rent messages will offer it as a fee-free way to pay.'}</p>
+      <button class="btn small" data-upi>🔒 ${s.upi ? 'Change' : 'Set UPI ID'}</button></div>
     <div class="card"><h2>Reminders on this phone</h2><div data-push><p class="note" style="margin-top:0">Checking…</p></div></div>
     <div class="card"><h2>Reading IDs</h2>${idReadingHtml(s.idReading)}</div>
     <div class="card"><div class="card-h"><h2>${GUARD}’s phone</h2><button class="btn small primary" data-pair>＋ Add a phone</button></div>
@@ -1123,6 +1221,22 @@ async function viewMenu() {
     'menu'
   );
   renderPushCard();
+  $app.querySelector('[data-upi]').addEventListener('click', () =>
+    openSheet(
+      `<h2>Direct UPI payments</h2><form>
+        <label class="f">Your UPI ID <input name="upi_id" maxlength="120" placeholder="name@okhdfcbank" value="${esc(s.upi?.id || '')}" autocapitalize="off"></label>
+        <label class="f">Name shown to tenants <small>(optional)</small><input name="upi_name" maxlength="60" value="${esc(s.upi?.name || '')}"></label>
+        <label class="f">PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required maxlength="20"></label>
+        <p class="note">Leave the UPI ID empty to stop offering direct UPI.</p>
+        <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`,
+      async (v) => {
+        await api('/api/settings/upi', { method: 'PUT', body: v });
+        closeSheet();
+        toast(v.upi_id ? 'UPI ID saved' : 'Direct UPI turned off');
+        viewMenu();
+      }
+    )
+  );
   const loadDevices = async () => {
     const box = $app.querySelector('[data-devices]');
     if (!box) return;

@@ -1,6 +1,6 @@
 import type { D1Database, Env } from './env';
 import { buildLedger, monthLabel } from './rent.ts';
-import { NotFoundError, ValidationError, getTenancy, recordRazorpayPayment } from './db.ts';
+import { NotFoundError, ValidationError, getSetting, getTenancy, recordRazorpayPayment } from './db.ts';
 
 // Razorpay Payment Links over plain fetch (Razorpay's Node SDK doesn't run on Workers).
 // The app creates a link for what the tenant owes; you send it from your phone with one tap
@@ -94,9 +94,24 @@ function describe(unit: string, periods: { month: string; rent: number; paid: nu
   return unpaid.length === 1 ? `Rent ${unit} · ${first}` : `Rent ${unit} · ${first} to ${last} (${unpaid.length} months)`;
 }
 
-export function messageFor(name: string, unit: string, amount: number, description: string, url: string) {
+export interface Upi {
+  id: string;
+  name: string | null;
+}
+
+/** The owner's own UPI ID for direct (fee-free) payments, set in Settings. */
+export async function getUpi(db: D1Database): Promise<Upi | null> {
+  const id = await getSetting(db, 'upi_id');
+  return id ? { id, name: await getSetting(db, 'upi_name') } : null;
+}
+
+export function messageFor(name: string, unit: string, amount: number, description: string, url: string | null, upi: Upi | null = null) {
   const firstName = name.split(/\s+/)[0];
-  return `Hello ${firstName}, this is your rent reminder for ${unit}, ${PROPERTY}.\n${description}: ₹${amount.toLocaleString('en-IN')}\nPay here: ${url}\nThank you.`;
+  const lines = [`Hello ${firstName}, this is your rent reminder for ${unit}, ${PROPERTY}.`, `${description}: ₹${amount.toLocaleString('en-IN')}`];
+  if (url) lines.push(`Pay here: ${url}`);
+  if (upi) lines.push(`${url ? 'Or pay' : 'Please pay'} by UPI to ${upi.id}${upi.name ? ` (${upi.name})` : ''} and send the screenshot.`);
+  lines.push('Thank you.');
+  return lines.join('\n');
 }
 
 export function shareLinks(whatsapp: string | null, phone: string | null, message: string) {
@@ -111,15 +126,19 @@ export function shareLinks(whatsapp: string | null, phone: string | null, messag
  * Reuses the last unpaid link if the amount hasn't changed; otherwise cancels it and makes a new one.
  */
 export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string, today: string) {
-  if (!razorpayStatus(env).configured) {
-    throw new ValidationError('Razorpay isn’t connected yet. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the Worker’s settings.');
+  const rzpOn = razorpayStatus(env).configured;
+  const upi = await getUpi(db);
+  if (!rzpOn && !upi) {
+    throw new ValidationError('Connect Razorpay, or add your UPI ID in Settings › Direct UPI payments, to send rent messages.');
   }
   const t = await getTenancy(db, tenancyId);
   if (!t.whatsapp && !t.phone) throw new ValidationError('Add the tenant’s WhatsApp or phone number first');
 
   // Catch any payment the webhook hasn't told us about before working out what's owed.
-  const open = (await db.prepare("SELECT * FROM payment_links WHERE tenancy_id = ? AND status = 'created' ORDER BY created_at DESC").bind(t.id).all<LinkRow>()).results;
-  for (const l of open) await syncLink(env, db, l).catch((e) => console.error('Link check failed', e));
+  if (rzpOn) {
+    const open = (await db.prepare("SELECT * FROM payment_links WHERE tenancy_id = ? AND status = 'created' ORDER BY created_at DESC").bind(t.id).all<LinkRow>()).results;
+    for (const l of open) await syncLink(env, db, l).catch((e) => console.error('Link check failed', e));
+  }
 
   const paidRow = await db.prepare('SELECT COALESCE(SUM(amount), 0) AS paid FROM payments WHERE tenancy_id = ?').bind(t.id).first<{ paid: number }>();
   const ledger = buildLedger(t, paidRow?.paid || 0, today);
@@ -133,6 +152,18 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
   }
   const description = describe(t.unit_code, ledger.periods);
   const test = isTest(env);
+
+  // No Razorpay: a UPI-only message. A row is still kept so "sent" is tracked like any link.
+  if (!rzpOn) {
+    const id = `upi_${crypto.randomUUID()}`;
+    await db
+      .prepare("INSERT INTO payment_links (id, tenancy_id, amount, description, short_url, status, test) VALUES (?, ?, ?, ?, '', 'upi', 0)")
+      .bind(id, t.id, amount, description)
+      .run();
+    const link = (await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(id).first<LinkRow>())!;
+    const message = messageFor(t.contact_name, t.unit_code, amount, description, null, upi);
+    return { link, amount, description, message, test: false, upiOnly: true, ...shareLinks(t.whatsapp, t.phone, message) };
+  }
 
   const stillOpen = (await db.prepare("SELECT * FROM payment_links WHERE tenancy_id = ? AND status = 'created' ORDER BY created_at DESC").bind(t.id).all<LinkRow>()).results;
   let link = stillOpen.find((l) => l.amount === amount && Boolean(l.test) === test) || null;
@@ -165,8 +196,8 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
     link = (await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(created.id).first<LinkRow>())!;
   }
 
-  const message = messageFor(t.contact_name, t.unit_code, amount, description, link.short_url);
-  return { link, amount, description, message, test, ...shareLinks(t.whatsapp, t.phone, message) };
+  const message = messageFor(t.contact_name, t.unit_code, amount, description, link.short_url, upi);
+  return { link, amount, description, message, test, upiOnly: false, ...shareLinks(t.whatsapp, t.phone, message) };
 }
 
 export async function markSent(db: D1Database, linkId: string, via: string) {

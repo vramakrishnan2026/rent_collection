@@ -36,12 +36,16 @@ const env = {
       }
     },
   },
-  // Pretend ID reader: every photo reads as the same Aadhaar card.
+  // Pretend AI: IDs read as the same Aadhaar card, screenshots as a ₹10,500 payment, and a canned answer.
   AI: {
-    run: async (_m, i) =>
-      i.prompt === 'agree'
-        ? {}
-        : { response: '{"cards":[{"type":"Aadhaar","name":"PRIYA SHETTY","address":"D/O Ramesh Shetty, #8, 1st Cross, Challaghatta, Bengaluru 560071"}]}' },
+    run: async (_m, i) => {
+      const text = JSON.stringify(i);
+      if (i.prompt === 'agree') return {};
+      if (text.includes('screenshot of a UPI'))
+        return { response: `{"status":"success","amount":10500,"date":"${todayIST()}","utr":"6312${Date.now() % 100000000}","payer":"Anitha Rao","payee":"owner@okhdfcbank"}` };
+      if (text.includes('24-unit building')) return { response: '(Preview) G1 Ravi Kumar owes ₹18,000 for Sep and Oct 2026; G6 Mohammed Irfan owes ₹13,500.' };
+      return { response: '{"cards":[{"type":"Aadhaar","name":"PRIYA SHETTY","address":"D/O Ramesh Shetty, #8, 1st Cross, Challaghatta, Bengaluru 560071"}]}' };
+    },
   },
 };
 
@@ -60,7 +64,7 @@ globalThis.fetch = async (u, init = {}) => {
   }
   return realFetch(u, init);
 };
-await DB.prepare("INSERT INTO settings (key, value) VALUES ('google_drive_refresh_token', 'preview')").run();
+await DB.prepare("INSERT INTO settings (key, value) VALUES ('google_drive_refresh_token', 'preview'), ('upi_id', 'owner@okhdfcbank'), ('upi_name', 'Owner')").run();
 
 // ---------- made-up tenants ----------
 const owner = 'cr_session=' + (await makeSession(env, 'owner@example.com'));

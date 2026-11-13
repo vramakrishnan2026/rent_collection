@@ -24,6 +24,13 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - Tap **WhatsApp** and the chat opens with the message and link ready. Tap Send in WhatsApp and come back: the next tenant is ready. SMS is there for anyone without WhatsApp.
   - It shows how many are sent this month, and lets you skip or resend.
   - **Reminders:** in **Settings › Reminders on this phone**, turn on free phone notifications. You get "Rent links ready" at 9 AM on the 1st and, if any are left, a reminder on the 3rd. On iPhone, the app must be added to the Home Screen first.
+- **Direct UPI (no gateway fee):** set your UPI ID in **Settings › Direct UPI payments** (PIN). Rent messages then also say "or pay by UPI to …". Without Razorpay, the messages offer UPI only.
+- **📷 From screenshot** (Payments, and in Record payment on a unit; owner only): a UPI payment screenshot is read, and the amount, date, UTR and payer are taken from it.
+  - It's **recorded straight away** only if the payment succeeded, the tenant is clear, the UTR is new, it went to your UPI ID and the date makes sense.
+  - Otherwise the payment form opens filled in, with the reason. The screenshot is kept in Drive under *Payment screenshots*.
+- **💬 Ask about your rent** (dashboard): ask in plain English, for example "Who owes rent?" or "How much did the First floor pay this year?"
+  - The app works out the figures itself, with the same rules as the screens, and the AI only phrases the answer.
+  - It's read-only, and phone numbers and addresses are left out.
 - **Dashboard:**
   - Collected this month (MTD) and this financial year (YTD, April to March)
   - Pending amount and how many tenants owe
@@ -111,6 +118,8 @@ Until Razorpay is connected, the Send link buttons show a message instead, and y
 - `worker/rent.ts`: the rent rules (due dates, 5% increases, oldest-first allocation, financial year)
 - `worker/db.ts`: units, tenancies, people, payments, the dashboard and Anita's rent-status view
 - `worker/razorpay.ts`: payment links, the WhatsApp/SMS message, the webhook (signature-checked) and the daily check
+- `worker/screenshot.ts`: reads UPI payment screenshots and records them when every check passes
+- `worker/ask.ts`: Ask about your rent (a read-only summary for the AI)
 - `worker/collect.ts`: the Send-all queue and the reminders on the 1st and 3rd (`worker/webpush.ts`: free web push, from the Finance Tracker)
 - `worker/devices.ts`: Anita's phone, paired with one-time codes (no Gmail)
 - `worker/idread.ts`: reads ID type, name and address off Indian ID cards (layout rules, fallbacks, ID-number scrubbing)

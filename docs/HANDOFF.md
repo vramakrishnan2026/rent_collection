@@ -92,18 +92,21 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Automatic matching of bank credit-alert emails.
    - Kannada or Hindi for Anita.
 
-## Next features the owner liked (not built yet)
+## Built on 13 Nov 2026 (from the Cloudflare AI discussion)
 
-These come from a discussion of Cloudflare AI features on 13 Nov 2026.
-
-1. **Reading payment screenshots, plus direct UPI.**
-   - Add a free "pay by UPI to the owner's account" option alongside the Razorpay link (no gateway fee).
-   - When a tenant sends a UPI payment screenshot, the owner (and maybe Anita) uploads it. The vision model already used for IDs (Llama 4 Scout on Workers AI) reads the amount, date, UTR/reference and payer. The app then matches the tenant and records the payment (method `upi`, UTR as the reference).
-   - Same approach as the IDs: guard against duplicates (the same UTR twice), and send anything unclear to review instead of guessing.
-   - **Needs:** the UPI ID the rent should go to.
-2. **Asking the data questions** (chat on the dashboard, owner only).
-   - Examples: "Who's more than 2 months behind?", "How much did the First floor pay this year?", "When is F3's next increase?"
-   - The model must only **read**, and work through the app's existing rules (`worker/rent.ts` and `db.ts`), with no raw database access, so answers match the screens.
+1. **Direct UPI + payment screenshots** (`worker/screenshot.ts`).
+   - **UPI ID:** set in Settings with the PIN, because it decides where money goes. It's stored in `settings` as `upi_id` and `upi_name`. When it's set, rent messages offer it; with no Razorpay, the messages are UPI-only (a `payment_links` row with status `upi` tracks "sent").
+   - **Screenshots are uploaded by the owner only.** The payment is recorded **straight away** only when every check passes:
+     - the payment succeeded,
+     - the tenant is clear (the one chosen, a full-name match on the payer, or a unique amount match),
+     - the UTR is new (it's saved as the payment reference),
+     - it went to the owner's UPI ID (when that's set and shown),
+     - the date isn't in the future and is less than 90 days old.
+   - Otherwise the Record payment form opens pre-filled, with the reasons. Screenshots go to Drive under *Payment screenshots/<month>* when Drive is linked.
+2. **Ask about your rent** (`worker/ask.ts`, dashboard, owner only).
+   - The app builds a read-only JSON summary with every figure pre-computed by `rent.ts` and `db.ts` rules: per unit, per floor, totals and by month.
+   - Llama 3.3 70B (falling back to Llama 4 Scout) only finds and phrases the answer, and is told to say when the data doesn't have it.
+   - No phone numbers, addresses or IDs are included. The conversation history is kept only on the page, for that visit.
 
 Also mentioned, lower priority:
 - Reading PDFs (ID PDFs and rental agreements, via Workers AI's document-to-text conversion).

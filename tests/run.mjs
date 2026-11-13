@@ -623,5 +623,95 @@ await test('Settings: Drive link/unlink and the backup need the PIN', async () =
   assert.equal((await call('/api/devices/pair', { method: 'POST', body: { label: 'Anita' } })).status, 200, 'adding a phone needs no PIN');
 });
 
+// --- UPI screenshots, direct UPI and Ask
+console.log('Screenshots, UPI and Ask');
+await test('reading payment screenshots: dates, amounts and UTRs in many shapes', async () => {
+  const { readFromReply, cleanDate, cleanUtr } = await import('../worker/screenshot.ts');
+  assert.equal(cleanDate('03/11/2026', today), '2026-11-03');
+  assert.equal(cleanDate('3 Nov 2026, 9:12 am', today), '2026-11-03');
+  assert.equal(cleanDate('Nov 3, 2026', today), '2026-11-03');
+  assert.equal(cleanUtr('6312 4567 8901'), '631245678901');
+  assert.equal(cleanUtr('N/A'), null);
+  const r = readFromReply('Sure! {"status":"Payment Successful","amount":"₹12,000.00","date":"2026-11-05","utr":"631245678901","payer":"RAVI KUMAR","payee":"owner@okhdfcbank"}', today);
+  assert.deepEqual(r, { status: 'success', amount: 12000, date: '2026-11-05', utr: '631245678901', payer: 'RAVI KUMAR', payee: 'owner@okhdfcbank' });
+});
+let aiShot = null;
+let lastAsk = null;
+const prevAI = env.AI.run;
+env.AI.run = async (m, input) => {
+  const text = JSON.stringify(input);
+  if (text.includes('screenshot of a UPI')) return { response: JSON.stringify(aiShot) };
+  if (text.includes('Challaghatta Home, a 24-unit building')) {
+    lastAsk = input;
+    return { response: 'G2 (Asha Rao) owes ₹10,000 for October 2026.' };
+  }
+  return prevAI(m, input);
+};
+const shot = async (extra = {}) => {
+  const form = new FormData();
+  form.append('photo', new Blob([new Uint8Array(4000)], { type: 'image/jpeg' }), 'shot.jpg');
+  form.append('preview', 'x'.repeat(500));
+  for (const [k, v] of Object.entries(extra)) form.append(k, v);
+  const res = await worker.fetch(new Request(BASE + '/api/payments/screenshot', { method: 'POST', headers: { Cookie: owner }, body: form }), env);
+  return { status: res.status, body: await res.json() };
+};
+await test('UPI ID is set from Settings, with the PIN', async () => {
+  assert.equal((await call('/api/settings/upi', { method: 'PUT', body: { upi_id: 'owner@okhdfcbank' } })).status, 400);
+  assert.equal((await call('/api/settings/upi', { method: 'PUT', body: { upi_id: 'not a upi', pin: '1234' } })).status, 400);
+  const r = await call('/api/settings/upi', { method: 'PUT', body: { upi_id: 'owner@okhdfcbank', upi_name: 'Vinay', pin: '1234' } });
+  assert.deepEqual(r.body.upi, { id: 'owner@okhdfcbank', name: 'Vinay' });
+  assert.equal((await call('/api/settings')).body.upi.id, 'owner@okhdfcbank');
+});
+await test('a clear screenshot is recorded straight away; the same UTR twice is not', async () => {
+  const g2 = (await call('/api/units/G2')).body.current;
+  aiShot = { status: 'success', amount: 5000, date: '2026-11-10', utr: '631245678901', payer: 'Asha Rao', payee: 'owner@okhdfcbank' };
+  const r = await shot();
+  assert.equal(r.body.recorded, true, JSON.stringify(r.body));
+  assert.equal(r.body.unit, 'G2');
+  const after = (await call('/api/units/G2')).body.current;
+  assert.equal(after.totalPaid - g2.totalPaid, 5000);
+  const p = after.payments.find((x) => x.reference === '631245678901');
+  assert.deepEqual([p.method, p.paid_on, p.note], ['upi', '2026-11-10', 'From screenshot']);
+  const again = await shot();
+  assert.equal(again.body.recorded, false);
+  assert.match(again.body.reasons.join(' '), /already recorded/);
+});
+await test('anything doubtful opens the form instead, with the reason', async () => {
+  aiShot = { status: 'success', amount: 5000, date: '2026-11-11', utr: '631245678902', payer: 'Asha Rao', payee: 'someoneelse@ybl' };
+  let r = await shot();
+  assert.deepEqual([r.body.recorded, r.body.unit], [false, 'G2']);
+  assert.match(r.body.reasons[0], /not your UPI ID/);
+  aiShot = { status: 'failed', amount: 5000, date: '2026-11-11', utr: '631245678903', payer: 'Asha Rao', payee: null };
+  assert.match((await shot()).body.reasons.join(' '), /failed/);
+  aiShot = { status: 'success', amount: 777, date: '2026-11-11', utr: '631245678904', payer: 'Unknown Person', payee: null };
+  r = await shot();
+  assert.match(r.body.reasons.join(' '), /tenant/);
+  // …but choosing the tenant on their unit page settles it
+  r = await shot({ tenancy_id: g2 });
+  assert.equal(r.body.recorded, true);
+});
+await test('rent message includes the direct UPI option', async () => {
+  const saved = [env.RAZORPAY_KEY_ID, env.RAZORPAY_KEY_SECRET];
+  env.RAZORPAY_KEY_ID = env.RAZORPAY_KEY_SECRET = undefined; // UPI only
+  const id = (await call('/api/units/S4')).body.current.id;
+  const r = await call(`/api/tenancies/${id}/link`, { method: 'POST', body: {} });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.upiOnly, true);
+  assert.match(r.body.message, /Please pay by UPI to owner@okhdfcbank \(Vinay\)/);
+  assert.ok(r.body.whatsappUrl.startsWith('https://wa.me/91'));
+  [env.RAZORPAY_KEY_ID, env.RAZORPAY_KEY_SECRET] = saved;
+});
+await test('Ask: answers from a read-only summary with figures worked out by the app', async () => {
+  const r = await call('/api/ask', { method: 'POST', body: { question: 'Who owes rent?' } });
+  assert.equal(r.status, 200);
+  assert.match(r.body.answer, /G2/);
+  const data = lastAsk.messages[0].content;
+  assert.match(data, /"unit":"G2"/);
+  assert.match(data, /overdueMonths/);
+  assert.ok(!/9876543210|98450/.test(data), 'no phone numbers');
+  assert.equal((await call('/api/ask', { method: 'POST', body: { question: 'x' }, cookie: guard })).status, 403);
+});
+env.AI.run = prevAI;
+
 globalThis.fetch = realFetch;
 console.log(`\n${passed} passed`);
