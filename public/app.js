@@ -260,7 +260,7 @@ async function viewHome() {
       <div class="kpi ${d.pendingTotal > 0 ? 'red' : ''}"><div class="l">Pending</div><div class="v">${inr(d.pendingTotal)}</div><div class="s">${d.pendingUnits ? `${plural(d.pendingUnits, 'tenant')} behind` : 'Everyone is up to date'}</div></div>
       <div class="kpi"><div class="l">Deposits held</div><div class="v">${inr(d.depositsHeld)}</div><div class="s">Refundable advances</div></div>
     </div>
-    <div class="card ask"><div class="card-h"><h2>💬 Ask about your rent</h2></div>
+    <div class="card ask"><div class="card-h"><h2>💬 Ask about your rent</h2><span class="chip vacant">Read-only: can’t change anything</span></div>
       <div class="ask-log" data-ask-log>${askLog.map(askBubble).join('')}</div>
       <form data-ask class="ask-form"><input name="q" maxlength="500" placeholder="e.g. Who is more than 2 months behind?" autocomplete="off"><button class="btn primary" type="submit">Ask</button></form>
       <div class="ask-tips">${['Who owes rent?', 'How much did the First floor pay this year?', 'Whose 5% increase is next?', 'Which IDs are missing?'].map((t) => `<button class="fchip" data-ask-tip>${t}</button>`).join('')}</div></div>

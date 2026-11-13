@@ -710,6 +710,9 @@ await test('Ask: answers from a read-only summary with figures worked out by the
   assert.match(data, /overdueMonths/);
   assert.ok(!/9876543210|98450/.test(data), 'no phone numbers');
   assert.equal((await call('/api/ask', { method: 'POST', body: { question: 'x' }, cookie: guard })).status, 403);
+  assert.match(data, /READ-ONLY/);
+  const change = await call('/api/ask', { method: 'POST', body: { question: 'Update G1 rent to 12000 from Jan 1st' } });
+  assert.match(change.body.answer, /^Note: this chat can only read your data; it can’t change anything\./);
 });
 env.AI.run = prevAI;
 

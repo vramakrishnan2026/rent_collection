@@ -87,6 +87,10 @@ export async function snapshot(env: Env, today: string) {
 const SYSTEM = (data: unknown) =>
   `You answer the owner's questions about the rent of Challaghatta Home, a 24-unit building in Bengaluru.
 Answer ONLY from the DATA below, which the app worked out with its own rules. Never invent tenants, amounts or dates.
+You are READ-ONLY: you cannot change anything (rents, payments, tenants, dates). If asked to change, update, add or delete
+something, say clearly that you can't make changes, and tell the owner where to do it in the app instead
+(rent, name, phone, deposit: open the unit › Edit details; payments: Record payment; moving out: Move out).
+Never say or suggest that something has been changed.
 If the DATA doesn't contain the answer, say so briefly. Be short and direct: a sentence or a short list.
 Write rupees like ₹12,000 (Indian commas). Use unit codes (G1, F3…) and tenant names. Dates like 10 Dec 2026.
 DATA:
@@ -100,12 +104,15 @@ export async function ask(env: Env, body: any, today: string) {
     .slice(-6)
     .filter((m: any) => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string')
     .map((m: any) => ({ role: m.role, content: String(m.content).slice(0, 1500) }));
+  // Belt and braces: a request to change something always gets the same clear notice, whatever the model says.
+  const wantsChange = /\b(update|change|set|increase|decrease|raise|reduce|modify|edit|add|delete|remove|record|mark)\b/i.test(question);
+  const notice = wantsChange ? 'Note: this chat can only read your data; it can’t change anything. ' : '';
   const messages = [{ role: 'system', content: SYSTEM(await snapshot(env, today)) }, ...history, { role: 'user', content: question }];
   for (const model of [MODEL, FALLBACK]) {
     try {
       const reply = await env.AI.run(model, { messages, max_tokens: 600, temperature: 0.1 });
       const text = typeof reply === 'string' ? reply : reply?.response ?? reply?.result?.response;
-      if (typeof text === 'string' && text.trim()) return { answer: text.trim() };
+      if (typeof text === 'string' && text.trim()) return { answer: notice + text.trim(), readOnly: true };
     } catch (e) {
       console.error('Ask failed', model, e);
     }
