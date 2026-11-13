@@ -716,5 +716,267 @@ await test('Ask: answers from a read-only summary with figures worked out by the
 });
 env.AI.run = prevAI;
 
+// --- Demo access: a copy with made-up names, in its own database, behind a username and password
+console.log('Demo access');
+const { DEMO_COLUMNS } = await import('../worker/demo.ts');
+const DEMO = makeD1({ empty: true });
+const rows = (db, sql) => db.sqlite.prepare(sql).all();
+const count = (db, table) => rows(db, `SELECT COUNT(*) AS n FROM ${table}`)[0].n;
+const demoLogin = (username, password) =>
+  worker.fetch(new Request(BASE + '/auth/demo', { method: 'POST', body: new URLSearchParams({ username, password }), redirect: 'manual' }), env);
+const cookieFrom = (res, name) => (res.headers.getSetCookie().find((c) => c.startsWith(name + '=')) || '').split(';')[0];
+let demoAccess;
+let visitor;
+
+await test('no demo database: demo access is unavailable and the sign-in page lets nobody in', async () => {
+  assert.equal((await call('/api/settings')).body.demo.available, false);
+  assert.equal((await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } })).status, 400);
+  assert.equal((await demoLogin('demo', 'anything-at-all')).status, 403);
+});
+env.DB_DEMO = DEMO;
+await test('demo access is off until the owner turns it on, with the PIN', async () => {
+  const s = (await call('/api/settings')).body.demo;
+  assert.deepEqual([s.available, s.on, s.password], [true, false, null]);
+  assert.equal((await call('/auth/demo', { cookie: '' })).status, 200);
+  assert.equal((await demoLogin('demo', 'anything-at-all')).status, 403);
+  assert.equal((await call('/api/demo/on', { method: 'POST', body: {} })).status, 400, 'needs the PIN');
+  assert.equal((await call('/api/demo/on', { method: 'POST', body: { pin: '0000' } })).status, 400);
+  assert.equal((await call('/api/demo/on', { method: 'POST', body: { pin: '1234' }, cookie: guard })).status, 403);
+  assert.equal(rows(DEMO, 'SELECT name FROM sqlite_master').length, 0, 'nothing copied yet');
+});
+await test('turning it on makes the copy and gives a link, username and password', async () => {
+  const r = await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  demoAccess = r.body.demo;
+  assert.equal(demoAccess.url, BASE + '/auth/demo');
+  assert.equal(demoAccess.username, 'demo');
+  assert.match(demoAccess.password, /^[a-hjkmnp-z2-9]{4}-[a-hjkmnp-z2-9]{4}-[a-hjkmnp-z2-9]{4}$/);
+  assert.ok(Date.parse(demoAccess.expiresAt) - Date.now() > 29 * 86400_000);
+  assert.deepEqual(demoAccess.copied, { units: count(DB, 'units'), tenancies: count(DB, 'tenancies'), people: count(DB, 'people'), payments: count(DB, 'payments') });
+  assert.equal((await call('/api/settings')).body.demo.password, demoAccess.password, 'the owner can look it up again');
+});
+await test('the copy keeps rents and dates but no real name, number, address, note, reference, ID photo or record ID', async () => {
+  for (const t of ['units', 'tenancies', 'people', 'payments']) assert.equal(count(DEMO, t), count(DB, t), t);
+  assert.ok(count(DB, 'tenancies') >= 5 && count(DB, 'people') >= 5 && count(DB, 'payments') >= 3, 'there is real data to copy');
+  for (const t of ['payment_links', 'settings', 'id_uploads', 'devices', 'pair_codes', 'push_subscriptions']) assert.equal(count(DEMO, t), 0, `${t} is never copied`);
+  assert.ok(count(DB, 'settings') > 0 && count(DB, 'payment_links') > 0);
+
+  const money = 'SELECT unit_code, start_date, end_date, base_rent, deposit, bill_from, next_increase_on FROM tenancies ORDER BY unit_code, start_date';
+  assert.deepEqual(rows(DEMO, money), rows(DB, money));
+  const paid = 'SELECT amount, paid_on, method, test FROM payments ORDER BY paid_on, amount, method';
+  assert.deepEqual(rows(DEMO, paid), rows(DB, paid));
+
+  // Every private value in the real database, checked against everything in the demo.
+  const secret = new Set();
+  const add = (sql) => rows(DB, sql).forEach((r) => Object.values(r).forEach((v) => v !== null && String(v).trim() && secret.add(String(v).trim().toLowerCase())));
+  add('SELECT id, contact_name, phone, whatsapp, notes FROM tenancies');
+  add('SELECT id, name, address, drive_file_id, drive_file_name, back_file_id, back_file_name FROM people');
+  add('SELECT id, reference, rzp_payment_id, note, created_by FROM payments');
+  add('SELECT note FROM units');
+  add('SELECT value FROM settings WHERE length(value) >= 6');
+  assert.ok(secret.has('ravi kumar') && secret.has('9845012345') && secret.has('utr123'), 'the check itself sees real values');
+  const demoRows = ['units', 'tenancies', 'people', 'payments'].flatMap((t) => rows(DEMO, `SELECT * FROM ${t}`));
+  const demoValues = new Set(demoRows.flatMap((r) => Object.values(r)).filter((v) => v !== null).map((v) => String(v).trim().toLowerCase()));
+  const demoText = JSON.stringify(demoRows).toLowerCase();
+  for (const v of secret) {
+    assert.ok(!demoValues.has(v), `"${v}" is in the demo`); // no field holds a real value...
+    if (v.length >= 6) assert.ok(!demoText.includes(v), `"${v}" leaked into the demo`); // ...or contains one
+  }
+  assert.equal(rows(DEMO, 'SELECT COUNT(*) AS n FROM people WHERE address IS NOT NULL OR drive_file_id IS NOT NULL OR back_file_id IS NOT NULL')[0].n, 0);
+
+  // A tenant and their own entry under People still share one (made-up) name.
+  const g2 = rows(DEMO, "SELECT t.contact_name, p.name FROM tenancies t JOIN people p ON p.tenancy_id = t.id WHERE t.unit_code = 'G2' AND t.end_date IS NULL");
+  assert.equal(g2.length, 5);
+  assert.equal(g2.filter((r) => r.name === r.contact_name).length, 1);
+  assert.equal(new Set(g2.map((r) => r.name)).size, 5);
+  // A made-up name is never one that a real tenant happens to have.
+  const realNames = new Set(rows(DB, 'SELECT contact_name AS n FROM tenancies UNION SELECT name FROM people').map((r) => r.n.toLowerCase()));
+  assert.ok(realNames.has('arun nair'));
+  assert.ok(rows(DEMO, 'SELECT contact_name AS n FROM tenancies UNION SELECT name FROM people').every((r) => !realNames.has(r.n.toLowerCase())));
+  assert.ok(rows(DEMO, 'SELECT phone, whatsapp FROM tenancies').every((r) => [r.phone, r.whatsapp].every((n) => n === null || /^90000\d{5}$/.test(n))));
+});
+await test('every column of the copied tables is listed as kept, made up or left empty', async () => {
+  for (const [table, lists] of Object.entries(DEMO_COLUMNS)) {
+    const listed = [...lists.keep, ...lists.madeUp, ...lists.blank].sort();
+    assert.equal(new Set(listed).size, listed.length, `${table}: a column is listed twice`);
+    assert.deepEqual(listed, rows(DB, `PRAGMA table_info(${table})`).map((c) => c.name).sort(), `${table}: decide what the demo does with each column (worker/demo.ts)`);
+  }
+});
+await test('demo sign-in: username and password, no Google; wrong ones are refused', async () => {
+  assert.equal((await demoLogin('demo', 'aaaa-bbbb-cccc')).status, 401);
+  assert.equal((await demoLogin('owner', demoAccess.password)).status, 401);
+  const evil = await worker.fetch(new Request(BASE + '/auth/demo', { method: 'POST', body: new URLSearchParams({ username: 'demo', password: demoAccess.password }), headers: { Origin: 'https://evil.example' } }), env);
+  assert.equal(evil.status, 403);
+  const ok = await demoLogin(' Demo ', demoAccess.password.toUpperCase());
+  assert.equal(ok.status, 302);
+  assert.equal(ok.headers.get('Location'), '/');
+  visitor = cookieFrom(ok, 'cr_demo');
+  assert.ok(visitor.length > 40);
+  assert.equal(cookieFrom(ok, 'cr_session'), 'cr_session=', 'signs this browser out of the real app');
+  const me = (await call('/api/me', { cookie: visitor })).body;
+  assert.deepEqual([me.role, me.demo, me.demoPin, me.email], ['owner', true, '0000', 'Demo copy']);
+  assert.equal((await call('/api/me')).body.demo, false);
+  assert.equal((await call('/', { cookie: visitor })).status, 200);
+  assert.equal((await call('/auth/demo', { cookie: visitor })).status, 302, 'already signed in');
+});
+await test('a demo sign-in is not a real one, and a real one is not a demo one', async () => {
+  assert.equal((await call('/api/me', { cookie: visitor.replace('cr_demo=', 'cr_session=') })).status, 401);
+  assert.equal((await call('/api/me', { cookie: owner.replace('cr_session=', 'cr_demo=') })).status, 401);
+  assert.equal((await call('/api/me', { cookie: `${owner}; ${visitor}` })).body.demo, false, 'the owner’s own sign-in wins');
+  assert.equal((await call('/api/me', { cookie: visitor.slice(0, -2) + 'xx' })).status, 401, 'a changed cookie is refused');
+});
+await test('the demo shows the app working, on made-up tenants only', async () => {
+  const real = (await call('/api/units')).body;
+  const demo = (await call('/api/units', { cookie: visitor })).body;
+  assert.equal(demo.units.length, real.units.length);
+  const names = (b) => b.units.filter((u) => u.tenancy).map((u) => u.tenancy.contact_name);
+  assert.equal(names(demo).length, names(real).length);
+  assert.ok(names(demo).every((n) => !names(real).includes(n)));
+  assert.deepEqual(demo.units.map((u) => [u.code, u.status]), real.units.map((u) => [u.code, u.status]));
+  const [d, r] = [(await call('/api/dashboard', { cookie: visitor })).body, (await call('/api/dashboard')).body];
+  assert.equal(d.pendingTotal, r.pendingTotal);
+  assert.equal((await call('/api/security', { cookie: visitor })).status, 200);
+  assert.equal((await call('/api/payments', { cookie: visitor })).status, 200);
+  assert.equal((await call('/api/collect', { cookie: visitor })).status, 200);
+  const s = (await call('/api/settings', { cookie: visitor })).body;
+  assert.deepEqual([s.demo, s.drive.connected, s.drive.configured, s.upi, s.razorpay.mode], [null, false, false, null, 'test']);
+});
+await test('whatever a demo visitor does stays in the demo copy', async () => {
+  const before = JSON.stringify(['units', 'tenancies', 'people', 'payments', 'payment_links', 'settings', 'devices', 'pair_codes'].map((t) => rows(DB, `SELECT * FROM ${t} ORDER BY 1`)));
+  const unit = (await call('/api/units/G2', { cookie: visitor })).body;
+  const realUnit = (await call('/api/units/G2')).body;
+  assert.notEqual(unit.current.id, realUnit.current.id);
+  const pay = await call('/api/payments', { method: 'POST', cookie: visitor, body: { tenancy_id: unit.current.id, amount: 500, paid_on: today, method: 'cash' } });
+  assert.equal(pay.status, 201, JSON.stringify(pay.body));
+  assert.equal((await call('/api/payments', { method: 'POST', cookie: visitor, body: { tenancy_id: realUnit.current.id, amount: 500, paid_on: today, method: 'cash' } })).status, 404, 'real record IDs mean nothing in the demo');
+  assert.equal((await call(`/api/tenancies/${unit.current.id}`, { method: 'PUT', cookie: visitor, body: { contact_name: 'Changed In Demo', start_date: unit.current.start_date, base_rent: 99999 } })).status, 200);
+  assert.equal((await call('/api/units', { method: 'POST', cookie: visitor, body: { code: 'D9', floor: 'Demo' } })).status, 201);
+
+  // Locked actions: the demo has its own PIN, so the demo can't be used to find the owner's.
+  assert.equal((await call(`/api/payments/${pay.body.id}`, { method: 'DELETE', cookie: visitor, body: { pin: '1234' } })).status, 400);
+  assert.equal((await call(`/api/payments/${pay.body.id}`, { method: 'DELETE', cookie: visitor, body: { pin: '0000' } })).status, 200);
+  const ex = await call('/api/export', { method: 'POST', cookie: visitor, body: { pin: '0000' } });
+  assert.equal(ex.status, 200);
+  assert.ok(!JSON.stringify(ex.body).includes('Ravi Kumar') && JSON.stringify(ex.body).includes('Changed In Demo'));
+
+  // Switched off inside the demo.
+  for (const [path, body] of [['/api/demo/on', { pin: '0000' }], ['/api/demo/off', {}], ['/api/drive/connect', { pin: '0000' }], ['/api/drive/disconnect', { pin: '0000' }], ['/api/devices/pair', { label: 'x' }]]) {
+    assert.equal((await call(path, { method: 'POST', cookie: visitor, body })).status, 403, path);
+  }
+  assert.equal((await call('/api/drive/callback?code=x&state=y', { cookie: visitor })).status, 403);
+  const upi = await call('/api/settings/upi', { method: 'PUT', cookie: visitor, body: { pin: '0000', upi_id: 'demo@okaxis' } });
+  assert.equal(upi.status, 200);
+
+  const after = JSON.stringify(['units', 'tenancies', 'people', 'payments', 'payment_links', 'settings', 'devices', 'pair_codes'].map((t) => rows(DB, `SELECT * FROM ${t} ORDER BY 1`)));
+  assert.equal(after, before, 'the real database is untouched');
+  assert.equal((await call('/api/settings')).body.upi.id, 'owner@okhdfcbank');
+});
+await test('demo rent links: Razorpay test keys only, no phone number filled in, paid links recorded in the demo', async () => {
+  const prev = globalThis.fetch; // Razorpay faked again (the Drive fake above replaced the first one)
+  globalThis.fetch = async (input, init = {}) => {
+    if (!String(input).startsWith('https://api.razorpay.com/')) return prev(input, init);
+    rzCalls.push({ url: String(input), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    return String(input).endsWith('/payment_links') ? Response.json({ id: `plink_demo${rzCalls.length}`, short_url: 'https://rzp.io/rzp/demo', status: 'created' }) : Response.json({ status: 'created', payments: [] });
+  };
+  const queue = (await call('/api/collect', { cookie: visitor })).body.items.filter((i) => i.hasPhone);
+  assert.ok(queue.length >= 2, 'two demo tenants owe rent');
+  const unit = (await call(`/api/units/${queue[0].unit}`, { cookie: visitor })).body;
+  rzCalls.length = 0;
+  const r = await call(`/api/tenancies/${unit.current.id}/link`, { method: 'POST', cookie: visitor, body: {} });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.whatsappUrl.startsWith('https://wa.me/?text='), r.body.whatsappUrl);
+  assert.ok(r.body.smsUrl.startsWith('sms:?body='));
+  assert.equal(r.body.test, true);
+  const sent = rzCalls.find((c) => c.method === 'POST').body;
+  assert.match(sent.customer.contact, /^\+9190000\d{5}$/);
+  assert.equal(sent.customer.name, unit.current.contact_name);
+  assert.equal(count(DB, `payment_links WHERE id = '${r.body.link.id}'`), 0);
+
+  // Razorpay tells us it was paid: it lands in the demo copy, not the real payments.
+  const realPayments = count(DB, 'payments');
+  const demoPayments = count(DEMO, 'payments');
+  const res = await webhook({
+    event: 'payment_link.paid',
+    payload: { payment_link: { entity: { id: r.body.link.id, status: 'paid' } }, payment: { entity: { id: 'pay_DEMO1', amount: r.body.amount * 100, status: 'captured', created_at: Math.floor(Date.parse('2026-11-12T06:00:00Z') / 1000) } } },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual([count(DB, 'payments'), count(DEMO, 'payments')], [realPayments, demoPayments + 1]);
+
+  // With live keys the demo never talks to Razorpay at all.
+  const saved = env.RAZORPAY_KEY_ID;
+  env.RAZORPAY_KEY_ID = 'rzp_live_abc';
+  rzCalls.length = 0;
+  assert.equal((await call('/api/settings', { cookie: visitor })).body.razorpay.configured, false);
+  const live = await call(`/api/tenancies/${queue[1].tenancyId}/link`, { method: 'POST', cookie: visitor, body: {} });
+  assert.equal(live.status, 200, JSON.stringify(live.body));
+  assert.equal(live.body.upiOnly, true, 'falls back to the demo’s own UPI ID');
+  assert.equal(rzCalls.length, 0);
+  env.RAZORPAY_KEY_ID = saved;
+  globalThis.fetch = prev;
+});
+await test('signing out of the demo goes back to the demo sign-in page', async () => {
+  const out = await call('/auth/logout', { cookie: visitor });
+  assert.equal(out.res.headers.get('Location'), '/auth/demo?signed_out=1');
+  assert.equal(cookieFrom(out.res, 'cr_demo'), 'cr_demo=');
+  assert.equal((await call('/auth/logout')).res.headers.get('Location'), '/auth/login?signed_out=1');
+});
+await test('a new copy replaces the old one: old password and old sign-ins stop, visitor changes are gone', async () => {
+  const r = await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.notEqual(r.body.demo.password, demoAccess.password);
+  assert.equal((await call('/api/me', { cookie: visitor })).status, 401);
+  assert.equal((await demoLogin('demo', demoAccess.password)).status, 401);
+  demoAccess = r.body.demo;
+  visitor = cookieFrom(await demoLogin('demo', demoAccess.password), 'cr_demo');
+  assert.equal((await call('/api/me', { cookie: visitor })).status, 200);
+  assert.equal(count(DEMO, "units WHERE code = 'D9'"), 0);
+  assert.equal(count(DEMO, "tenancies WHERE contact_name = 'Changed In Demo'"), 0);
+  assert.equal(count(DEMO, 'payment_links') + count(DEMO, 'settings'), 0);
+  assert.equal(count(DEMO, 'payments'), count(DB, 'payments'));
+});
+await test('after a database change in the real app, the next copy has the new shape', async () => {
+  DB.sqlite.exec('ALTER TABLE units ADD COLUMN test_only_extra TEXT');
+  DB.sqlite.exec("UPDATE units SET test_only_extra = 'private thing'");
+  const r = await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(rows(DEMO, 'SELECT COUNT(*) AS n FROM units WHERE test_only_extra IS NULL')[0].n, count(DB, 'units'), 'a column nobody has listed arrives empty');
+  assert.equal(count(DEMO, 'tenancies'), count(DB, 'tenancies'));
+  DB.sqlite.exec('ALTER TABLE units DROP COLUMN test_only_extra');
+  demoAccess = (await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } })).body.demo;
+  visitor = cookieFrom(await demoLogin('demo', demoAccess.password), 'cr_demo');
+  assert.equal((await call('/api/units', { cookie: visitor })).status, 200);
+});
+await test('if the demo database were ever pointed at the real one, nothing is copied, emptied or opened', async () => {
+  const snapshot = () => JSON.stringify(['units', 'tenancies', 'people', 'payments', 'payment_links'].map((t) => rows(DB, `SELECT * FROM ${t} ORDER BY 1`)));
+  const before = snapshot();
+  env.DB_DEMO = DB;
+  const on = await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } });
+  assert.equal(on.status, 400);
+  assert.match(on.body.error, /real database/);
+  assert.equal((await call('/api/demo/off', { method: 'POST', body: {} })).status, 200);
+  assert.equal(snapshot(), before);
+  env.DB_DEMO = DEMO;
+  assert.equal((await call('/api/me', { cookie: visitor })).status, 401, 'and demo access is off');
+  demoAccess = (await call('/api/demo/on', { method: 'POST', body: { pin: '1234' } })).body.demo;
+  visitor = cookieFrom(await demoLogin('demo', demoAccess.password), 'cr_demo');
+});
+await test('demo access ends by itself after 30 days, and at once when turned off', async () => {
+  const saved = rows(DB, "SELECT value FROM settings WHERE key = 'demo_access'")[0].value;
+  DB.sqlite.prepare("UPDATE settings SET value = ? WHERE key = 'demo_access'").run(JSON.stringify({ ...JSON.parse(saved), expires_at: new Date(Date.now() - 1000).toISOString() }));
+  assert.equal((await call('/api/me', { cookie: visitor })).status, 401);
+  assert.equal((await demoLogin('demo', demoAccess.password)).status, 403);
+  assert.equal((await call('/api/settings')).body.demo.on, false);
+  DB.sqlite.prepare("UPDATE settings SET value = ? WHERE key = 'demo_access'").run(saved);
+  assert.equal((await call('/api/me', { cookie: visitor })).status, 200);
+
+  const off = await call('/api/demo/off', { method: 'POST', body: {} });
+  assert.deepEqual([off.status, off.body.demo.on, off.body.demo.password], [200, false, null]);
+  assert.equal((await call('/api/me', { cookie: visitor })).status, 401);
+  assert.equal((await call('/', { cookie: visitor })).status, 302);
+  assert.equal((await demoLogin('demo', demoAccess.password)).status, 403);
+  for (const t of ['units', 'tenancies', 'people', 'payments']) assert.equal(count(DEMO, t), 0, `${t} emptied`);
+  assert.ok(count(DB, 'tenancies') >= 5, 'the real data is still there');
+});
+
 globalThis.fetch = realFetch;
 console.log(`\n${passed} passed`);

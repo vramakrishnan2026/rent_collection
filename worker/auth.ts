@@ -16,6 +16,8 @@ export interface User {
   name?: string;
   /** Signed in as a paired security phone (no Gmail). */
   device?: boolean;
+  /** Signed in with the demo username and password: sees the demo copy only, never real data. */
+  demo?: boolean;
 }
 
 export const LOGIN_PATH = '/auth/login';
@@ -24,6 +26,9 @@ export const CALLBACK_PATH = '/auth/callback';
 export const LOGOUT_PATH = '/auth/logout';
 
 const SESSION_COOKIE = 'cr_session';
+/** Cookie for the demo sign-in (worker/demo.ts). Kept apart from the real session on purpose. */
+export const DEMO_COOKIE = 'cr_demo';
+export const DEMO_LOGIN_PATH = '/auth/demo';
 const STATE_COOKIE = 'cr_login_state';
 const SESSION_DAYS = 30;
 
@@ -85,6 +90,28 @@ export async function makeSession(env: Env, email: string, name?: string | null)
 }
 
 export const SESSION_COOKIE_NAME = SESSION_COOKIE;
+
+/** Signs a small JSON value with the session key (used by the demo sign-in). */
+export async function signValue(env: Env, value: Record<string, unknown>) {
+  const payload = b64url(enc.encode(JSON.stringify(value)));
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await hmacKey(env), enc.encode(payload)));
+  return `${payload}.${b64url(sig)}`;
+}
+
+/** The value inside a signed cookie, or null if it was changed or isn't ours. */
+export async function readSigned(env: Env, raw: string | null): Promise<Record<string, unknown> | null> {
+  if (!raw) return null;
+  const [payload, sig] = raw.split('.');
+  if (!payload || !sig) return null;
+  try {
+    const ok = await crypto.subtle.verify('HMAC', await hmacKey(env), fromB64url(sig), enc.encode(payload));
+    if (!ok) return null;
+    const value = JSON.parse(new TextDecoder().decode(fromB64url(payload)));
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The signed-in user, if the request has a valid session for someone still on a list. */
 export async function currentUser(request: Request, env: Env): Promise<User | null> {
@@ -243,11 +270,13 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
     }
 
     const session = await makeSession(env, email, firstName);
-    return redirect(safeNext(next || '/'), [clearState, cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400)]);
+    return redirect(safeNext(next || '/'), [clearState, cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400), cookie(DEMO_COOKIE, '', 0)]);
   }
 
   if (pathname === LOGOUT_PATH) {
-    return redirect(`${LOGIN_PATH}?signed_out=1`, [cookie(SESSION_COOKIE, '', 0)]);
+    // A demo visitor goes back to the demo sign-in page, everyone else to Google sign-in.
+    const back = getCookie(request, DEMO_COOKIE) && !getCookie(request, SESSION_COOKIE) ? DEMO_LOGIN_PATH : LOGIN_PATH;
+    return redirect(`${back}?signed_out=1`, [cookie(SESSION_COOKIE, '', 0), cookie(DEMO_COOKIE, '', 0)]);
   }
 
   return null;

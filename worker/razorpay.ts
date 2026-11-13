@@ -114,7 +114,14 @@ export function messageFor(name: string, unit: string, amount: number, descripti
   return lines.join('\n');
 }
 
-export function shareLinks(whatsapp: string | null, phone: string | null, message: string) {
+export function shareLinks(whatsapp: string | null, phone: string | null, message: string, demo = false) {
+  // In the demo the numbers are made up, so the message opens with no number filled in.
+  if (demo) {
+    return {
+      whatsappUrl: whatsapp ? `https://wa.me/?text=${encodeURIComponent(message)}` : null,
+      smsUrl: phone || whatsapp ? `sms:?body=${encodeURIComponent(message)}` : null,
+    };
+  }
   return {
     whatsappUrl: whatsapp ? `https://wa.me/91${whatsapp}?text=${encodeURIComponent(message)}` : null,
     smsUrl: phone || whatsapp ? `sms:+91${phone || whatsapp}?body=${encodeURIComponent(message)}` : null,
@@ -162,7 +169,7 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
       .run();
     const link = (await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(id).first<LinkRow>())!;
     const message = messageFor(t.contact_name, t.unit_code, amount, description, null, upi);
-    return { link, amount, description, message, test: false, upiOnly: true, ...shareLinks(t.whatsapp, t.phone, message) };
+    return { link, amount, description, message, test: false, upiOnly: true, ...shareLinks(t.whatsapp, t.phone, message, Boolean(env.DEMO)) };
   }
 
   const stillOpen = (await db.prepare("SELECT * FROM payment_links WHERE tenancy_id = ? AND status = 'created' ORDER BY created_at DESC").bind(t.id).all<LinkRow>()).results;
@@ -197,7 +204,7 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
   }
 
   const message = messageFor(t.contact_name, t.unit_code, amount, description, link.short_url, upi);
-  return { link, amount, description, message, test, upiOnly: false, ...shareLinks(t.whatsapp, t.phone, message) };
+  return { link, amount, description, message, test, upiOnly: false, ...shareLinks(t.whatsapp, t.phone, message, Boolean(env.DEMO)) };
 }
 
 export async function markSent(db: D1Database, linkId: string, via: string) {
@@ -229,8 +236,8 @@ function sameString(a: string, b: string) {
   return diff === 0;
 }
 
-/** Razorpay → us. Only signed calls are accepted. */
-export async function handleWebhook(request: Request, env: Env, db: D1Database): Promise<Response> {
+/** Razorpay → us. Only signed calls are accepted. `demoDb`: where links made inside the demo live. */
+export async function handleWebhook(request: Request, env: Env, db: D1Database, demoDb?: D1Database): Promise<Response> {
   if (!env.RAZORPAY_WEBHOOK_SECRET) return new Response('Webhook secret not set', { status: 503 });
   const body = await request.text();
   const given = request.headers.get('X-Razorpay-Signature') || '';
@@ -246,7 +253,12 @@ export async function handleWebhook(request: Request, env: Env, db: D1Database):
 
   const linkEntity = event?.payload?.payment_link?.entity;
   if (!linkEntity?.id) return new Response('ok'); // not a payment-link event: ignore
-  const link = await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(String(linkEntity.id)).first<LinkRow>();
+  let link = await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(String(linkEntity.id)).first<LinkRow>();
+  if (!link && demoDb) {
+    // Not one of ours: perhaps a test link made inside the demo. Record it there, never in the real data.
+    link = await demoDb.prepare('SELECT * FROM payment_links WHERE id = ?').bind(String(linkEntity.id)).first<LinkRow>().catch(() => null);
+    db = demoDb;
+  }
   if (!link) return new Response('ok'); // a link made outside this app
 
   if (event.event === 'payment_link.paid') {

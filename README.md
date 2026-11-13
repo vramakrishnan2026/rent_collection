@@ -31,6 +31,10 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 - **💬 Ask about your rent** (dashboard): ask in plain English, for example "Who owes rent?" or "How much did the First floor pay this year?"
   - The app works out the figures itself, with the same rules as the screens, and the AI only phrases the answer.
   - It's read-only, and phone numbers and addresses are left out.
+- **Demo access (Settings › Demo access, PIN):** for someone who has to look inside the app without seeing your tenants, such as Razorpay's website check.
+  - Turning it on makes a **separate copy** with made-up tenant names and phone numbers, and gives you a **link, username and password** to share. Rents, deposits and dates in the copy are your real figures; notes, addresses, ID photos, payment references and rent links are left out.
+  - The visitor signs in at `/auth/demo` (no Google) and can use every screen. Whatever they do stays in the copy. Inside the demo the PIN is `0000`, Razorpay works with test keys only, and WhatsApp/SMS open with no number filled in.
+  - It stops by itself after 30 days. **Turn off** stops it at once and empties the copy; **New copy & password** refreshes it.
 - **Dashboard:**
   - Collected this month (MTD) and this financial year (YTD, April to March)
   - Pending amount and how many tenants owe
@@ -58,6 +62,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 ### 1. Cloudflare (same account as the Finance Tracker)
 
 1. **Storage & Databases › D1 › Create**, named `rent_collection`. Its Database ID is already in `wrangler.jsonc` (`d7b71d89-…`).
+   - The demo copy uses a second database, `rent_collection_demo`. Nothing to do: Wrangler creates it on the first deploy (it has no Database ID in `wrangler.jsonc` on purpose). If a deploy ever stops at that step, create a D1 database with that name by hand and add its `database_id` next to `DB_DEMO`.
 2. **Workers & Pages › Create › Import a repository**, and pick this repo.
    - Build command: *(leave empty)*
    - Deploy command: `npm run deploy`. This applies database changes, then deploys.
