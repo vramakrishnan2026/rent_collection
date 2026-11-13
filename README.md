@@ -123,3 +123,6 @@ Commands:
 
 - `npm test`: runs the rent rules and API tests (Node 22+, no install needed)
 - `npm run lint`: type check
+- `npm run preview`: a local copy with made-up tenants (open `http://localhost:8787/dev/login?as=owner`)
+
+Decisions, live setup and open items: see `docs/HANDOFF.md`.

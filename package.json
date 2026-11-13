@@ -7,7 +7,8 @@
     "start": "wrangler d1 migrations apply rent_collection --local && wrangler dev",
     "deploy": "wrangler d1 migrations apply rent_collection --remote && wrangler deploy",
     "lint": "tsc --noEmit",
-    "test": "node --experimental-strip-types --no-warnings tests/run.mjs"
+    "test": "node --experimental-strip-types --no-warnings tests/run.mjs",
+    "preview": "node --experimental-strip-types --no-warnings tests/preview.mjs"
   },
   "devDependencies": {
     "typescript": "~5.8.2",
