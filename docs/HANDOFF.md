@@ -108,6 +108,12 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Llama 3.3 70B (falling back to Llama 4 Scout) only finds and phrases the answer, and is told to say when the data doesn't have it.
    - No phone numbers, addresses or IDs are included. The conversation history is kept only on the page, for that visit.
 
+## Wanted next (discussed 13 Nov 2026, not built)
+
+- **Change rent from a date.** Today **Edit details** replaces `base_rent` for the whole tenancy, including months already charged. The owner wants to set, say, "₹12,000 from 1 Jan 2027": earlier months keep the old rent, and the 5% cycle continues from the new rent. This probably needs a `rent_changes` table that `rent.ts` reads.
+- **Bulk edit.** A table of all units for editing many at once: new rent plus from-date, next 5% date, deposit, phone. Show a summary of the changes, ask for the PIN once, and make it easy on a laptop (cards on a phone). The owner may do this later with Claude.
+- (Fixed already: the Ask chat once replied as though it had changed rents. It's now explicitly read-only, and the server adds a notice to any change request.)
+
 Also mentioned, lower priority:
 - Reading PDFs (ID PDFs and rental agreements, via Workers AI's document-to-text conversion).
 - Matching bank credit-alert emails (Cloudflare Email Workers).
