@@ -113,7 +113,12 @@ function openSheet(html, onSubmit) {
   }
   return $sheet.querySelector('.sheet');
 }
-const closeSheet = () => ($sheet.innerHTML = '');
+const closeSheet = () => {
+  $sheet.innerHTML = '';
+  // On a unit page, look once for anything the form changed (a rent link just made, say).
+  const w = unitWatch;
+  if (w) setTimeout(() => unitWatch === w && refreshUnit(), 400);
+};
 // Tenant form: show the "already living here" dates only when ticked.
 $sheet.addEventListener('change', (e) => {
   if (e.target.name !== 'existing') return;
@@ -457,9 +462,38 @@ const tenancyBody = (v) => ({
   deposit: String(v.deposit || '0').replace(/[,₹\s]/g, ''),
 });
 
-async function viewUnit(code) {
-  const d = await api(`/api/units/${encodeURIComponent(code)}`);
+// Keeping an open unit page up to date, so a payment shows without leaving the page.
+// Razorpay's webhook records the payment within seconds; this only re-reads the unit.
+//   - every 30 seconds, but only while this page is on screen and has an unpaid rent link,
+//     and for at most 30 minutes after the page last changed (a page left open all day goes quiet)
+//   - once when you come back to the tab or close a form
+// It never runs on other pages, in the background, or while a form is open (so nothing typed is lost),
+// and the page is redrawn only when something actually changed.
+let unitWatch = null; // { code, seen, unpaidLink, payments, at } for the unit page on screen
+const UNIT_REFRESH_MS = 30_000;
+const UNIT_REFRESH_FOR_MS = 30 * 60_000;
+
+async function refreshUnit() {
+  const w = unitWatch;
+  if (!w || w.busy || document.visibilityState !== 'visible' || $sheet.innerHTML) return;
+  w.busy = true;
+  const d = await api(`/api/units/${encodeURIComponent(w.code)}`).catch(() => null);
+  w.busy = false;
+  if (!d || unitWatch !== w || $sheet.innerHTML || JSON.stringify(d) === w.seen) return;
+  const y = window.scrollY;
+  await viewUnit(w.code, d);
+  window.scrollTo(0, y);
+  if ((d.current?.payments.length || 0) > w.payments) toast('Payment received ✓');
+}
+setInterval(() => unitWatch?.unpaidLink && Date.now() - unitWatch.at < UNIT_REFRESH_FOR_MS && refreshUnit(), UNIT_REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshUnit();
+});
+
+async function viewUnit(code, fresh) {
+  const d = fresh || (await api(`/api/units/${encodeURIComponent(code)}`));
   const { unit, current: t, past } = d;
+  unitWatch = { code: unit.code, seen: JSON.stringify(d), unpaidLink: Boolean(t?.links.some((l) => l.status === 'created')), payments: t?.payments.length || 0, at: Date.now() };
   headerExtra = `<a class="icon-btn" href="#/units" title="Back">←</a>`;
   let body = '<div class="unit-cols"><div class="ucol">';
   if (d.waitingIds?.length) {
@@ -1664,6 +1698,7 @@ document.addEventListener('click', (e) => {
 });
 
 async function render() {
+  unitWatch = null; // leaving the page stops its refresh; viewUnit starts it again
   closeSheet();
   const [route, arg] = location.hash.replace(/^#\/?/, '').split('/');
   try {

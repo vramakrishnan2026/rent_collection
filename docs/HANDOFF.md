@@ -108,6 +108,16 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Llama 3.3 70B (falling back to Llama 4 Scout) only finds and phrases the answer, and is told to say when the data doesn't have it.
    - No phone numbers, addresses or IDs are included. The conversation history is kept only on the page, for that visit.
 
+## Unit page keeps itself up to date (built 13 Nov 2026)
+
+The owner noticed that after sending a rent link from a unit page, a payment didn't show until they left the page and came back. The webhook had recorded it; only the screen was stale. They asked what a refresh would cost and chose the light version:
+
+- The unit page re-reads itself **every 30 seconds only while it is on screen and has an unpaid rent link**, plus **once when you return to the tab or close a form**.
+- It stops when you go to another page, switch tabs or close the app, and it goes quiet 30 minutes after the page last changed. There is no background checking.
+- It pauses while a form is open, so nothing typed is lost, and redraws only if something changed (keeping the scroll position). A new payment shows "Payment received ✓".
+- It only re-reads the unit from the app's own database (one small request). It does not ask Razorpay; the **Check** button still does that.
+- Code: `refreshUnit` in `public/app.js`.
+
 ## PIN sign-in for a visitor (built 13 Nov 2026, for Razorpay's KYC website check)
 
 Razorpay asked to sign in and see inside the app. Two decisions by the owner, in order:
