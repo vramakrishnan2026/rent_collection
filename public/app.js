@@ -147,7 +147,7 @@ function shell(title, sub, body, tab) {
     : '';
   $app.innerHTML = `<div class="layout${owner ? ' has-nav' : ''}">${nav}<div class="content">
     <header class="top"><h1>${title}${sub ? `<span class="sub">${sub}</span>` : ''}</h1>${headerExtra}</header>
-    <main class="wrap">${me.demo ? `<div class="banner"><b>Demo copy.</b> Tenant names and phone numbers are made up. PIN for locked actions: <b>${esc(me.demoPin || '')}</b>.</div>` : ''}${body}</main></div></div>`;
+    <main class="wrap">${me.viewOnly ? '<div class="banner"><b>View only.</b> This PIN sign-in can look at everything and change nothing.</div>' : ''}${body}</main></div></div>`;
   headerExtra = '';
 }
 let headerExtra = '';
@@ -498,7 +498,7 @@ async function viewUnit(code) {
     const contact = [t.whatsapp && `WhatsApp ${t.whatsapp}`, t.phone && t.phone !== t.whatsapp && `SMS ${t.phone}`].filter(Boolean).join(' · ') || 'No number yet';
     body += `${t.start_date > d.today ? `<div class="banner">Moves in on ${fmtDate(t.start_date)}.</div>` : ''}${owe}
       <div class="card"><div class="row" style="padding-top:0"><div class="main"><div class="t">${esc(t.contact_name)}</div><div class="d">${esc(contact)}</div></div>
-        ${(t.phone || t.whatsapp) && !me.demo ? `<a class="btn small" href="tel:+91${esc(t.phone || t.whatsapp)}">Call</a>` : ''}</div>
+        ${t.phone || t.whatsapp ? `<a class="btn small" href="tel:+91${esc(t.phone || t.whatsapp)}">Call</a>` : ''}</div>
         <div class="facts" style="margin-top:.6rem">
           <div><div class="l">Moved in</div><div class="v">${fmtDate(t.start_date)}${t.bill_from ? `<br><span class="note">charged from ${fmtDate(t.bill_from)}</span>` : ''}</div></div>
           <div><div class="l">Rent now</div><div class="v">${inr(t.currentRent)}</div></div>
@@ -1191,17 +1191,17 @@ function idReadingHtml(r) {
     <div class="msg mono">${esc((l.tries || [l.error]).join('\n'))}</div>`;
 }
 
-/** Settings › Demo access: a copy with made-up names behind a username and password (e.g. for Razorpay's check). */
-function demoCardHtml(d) {
-  if (!d.available) return '<p class="note" style="margin-top:0">The demo database isn’t connected yet (DB_DEMO in wrangler.jsonc).</p>';
-  const about = 'For someone who has to look inside the app without seeing your tenants, such as Razorpay’s check. It’s a separate copy with made-up names and phone numbers, behind its own username and password. Rents, deposits and dates in the copy are your real figures.';
-  if (!d.on) return `<p class="note" style="margin-top:0">${about}</p><button class="btn small primary" data-demo-on>🔒 Turn on demo access</button>`;
-  return `<p style="margin-top:0"><b>On until ${fmtDate(d.expiresAt)}</b></p>
-    <div class="msg mono">Link: ${esc(d.url)}
-Username: ${esc(d.username)}
-Password: ${esc(d.password)}</div>
-    <div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn small primary" data-demo-copy>Copy details</button><button class="btn small" data-demo-on>🔒 New copy &amp; password</button><button class="btn small danger" data-demo-off>Turn off</button></div>
-    <p class="note">The copy was made on ${fmtDate(d.createdAt)}: later changes to your data aren’t in it until you make a new copy. Inside the demo the PIN is ${esc(d.pin)}. To see it yourself, open the link in a private window.</p>`;
+/** Settings › PIN sign-in: lets a visitor (e.g. Razorpay's check) sign in on the normal sign-in page, view only. */
+function pinSignInHtml(p) {
+  if (!p.on) {
+    return `<p class="note" style="margin-top:0">For someone without an approved Google account who has to sign in and look inside, such as Razorpay’s check. It adds a PIN box to your sign-in page. They see your <b>real</b> tenants and payments but can’t change anything. It stops by itself after 14 days.</p>
+      <button class="btn small primary" data-pinsignin-on>🔒 Turn on PIN sign-in</button>`;
+  }
+  return `<p style="margin-top:0"><b>On until ${fmtDate(p.expiresAt)}</b></p>
+    <div class="msg mono">Sign-in page: ${esc(p.url)}
+PIN: ${esc(p.pin.slice(0, 4))} ${esc(p.pin.slice(4))}</div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn small primary" data-pinsignin-copy>Copy details</button><button class="btn small" data-pinsignin-on>🔒 New PIN</button><button class="btn small danger" data-pinsignin-off>Turn off</button></div>
+    <p class="note">Anyone with this PIN can see tenant names, phone numbers and payments (view only). Turn it off as soon as the check is done. This is not your own PIN for locked actions.</p>`;
 }
 
 async function viewMenu() {
@@ -1217,7 +1217,7 @@ async function viewMenu() {
       <p class="mono">${esc(s.webhookUrl)}</p>
       <p class="note">Webhook secret: <b>${rz.webhook ? 'set' : 'not set (add RAZORPAY_WEBHOOK_SECRET)'}</b>. Without it, payments are still picked up by a daily check at 9 AM, or when you tap Check.</p>
       <button class="btn small danger" data-clear-test>🔒 Delete test payments</button></div>
-    ${s.demo ? `<div class="card"><h2>Demo access</h2>${demoCardHtml(s.demo)}</div>` : ''}
+    ${s.pinSignIn ? `<div class="card"><h2>PIN sign-in (view only)</h2>${pinSignInHtml(s.pinSignIn)}</div>` : ''}
     <div class="card"><h2>Google Drive (tenant IDs)</h2>
       <p class="note" style="margin-top:0">${s.drive.connected ? 'Linked. ID photos go to “Challaghatta Home › Tenant IDs › unit”.' : s.drive.configured ? 'Not linked yet.' : 'Google isn’t set up on the server.'}</p>
       ${s.drive.connected ? '<button class="btn small" data-drive-off>🔒 Unlink</button>' : `<button class="btn small primary" data-drive-on ${s.drive.configured ? '' : 'disabled'}>🔒 Link Google Drive</button>`}</div>
@@ -1235,34 +1235,27 @@ async function viewMenu() {
     'menu'
   );
   renderPushCard();
-  $app.querySelector('[data-demo-on]')?.addEventListener('click', () =>
+  $app.querySelector('[data-pinsignin-on]')?.addEventListener('click', () =>
     pinSheet(
-      s.demo.on
-        ? 'Make a new demo copy and password? The current password stops working.'
-        : 'Turn on demo access? Anyone with the link, username and password can see a copy of the app with made-up names.',
-      s.demo.on ? 'New copy' : 'Turn on',
+      s.pinSignIn.on
+        ? 'Make a new sign-in PIN? The current one stops working and anyone signed in with it is signed out.'
+        : 'Turn on PIN sign-in? Anyone with the PIN can see your real tenants and payments (view only).',
+      s.pinSignIn.on ? 'New PIN' : 'Turn on',
       async (pin) => {
-        await api('/api/demo/on', { method: 'POST', body: { pin } });
-        toast('Demo access is on');
+        await api('/api/pin-signin/on', { method: 'POST', body: { pin } });
+        toast('PIN sign-in is on');
         viewMenu();
       }
     )
   );
-  $app.querySelector('[data-demo-off]')?.addEventListener('click', () =>
-    openSheet(
-      `<h2>Turn off demo access?</h2><form><p class="note">The link and password stop working straight away and the demo copy is emptied. Your own data isn’t touched.</p>
-        <div class="actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary danger-fill" type="submit">Turn off</button></div></form>`,
-      async () => {
-        await api('/api/demo/off', { method: 'POST', body: {} });
-        closeSheet();
-        toast('Demo access is off');
-        viewMenu();
-      }
-    )
-  );
-  $app.querySelector('[data-demo-copy]')?.addEventListener('click', async () => {
-    await navigator.clipboard.writeText(`Challaghatta Home rent app (demo)\nLink: ${s.demo.url}\nUsername: ${s.demo.username}\nPassword: ${s.demo.password}`).catch(() => {});
-    toast('Demo details copied');
+  $app.querySelector('[data-pinsignin-off]')?.addEventListener('click', async () => {
+    await api('/api/pin-signin/off', { method: 'POST', body: {} });
+    toast('PIN sign-in is off');
+    viewMenu();
+  });
+  $app.querySelector('[data-pinsignin-copy]')?.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(`Challaghatta Home rent app\nSign-in page: ${s.pinSignIn.url}\nChoose "Sign in with PIN" and enter: ${s.pinSignIn.pin}`).catch(() => {});
+    toast('Sign-in details copied');
   });
   $app.querySelector('[data-upi]').addEventListener('click', () =>
     openSheet(

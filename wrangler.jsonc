@@ -25,14 +25,6 @@
       "database_name": "rent_collection",
       "database_id": "d7b71d89-7cc4-441b-92df-554ba2558641",
       "migrations_dir": "migrations"
-    },
-    // The demo copy (Settings > Demo access): a separate database, so a demo sign-in can never
-    // reach real tenants. There is no Database ID on purpose: Wrangler (4.45+) creates
-    // "rent_collection_demo" on the first deploy and keeps it linked after that.
-    // The app builds its tables itself when demo access is turned on (no migrations to run).
-    {
-      "binding": "DB_DEMO",
-      "database_name": "rent_collection_demo"
     }
   ],
 

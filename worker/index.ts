@@ -1,6 +1,6 @@
 import type { Env, ExecutionContext, ScheduledController } from './env';
-import { cookie, currentUser, DEMO_LOGIN_PATH, getCookie, handleAuth, isPublicPath, LOGIN_PATH, redirect, type User } from './auth.ts';
-import { DEMO_PIN, demoEnv, demoStatus, demoUser, handleDemoLogin, turnOffDemo, turnOnDemo } from './demo.ts';
+import { cookie, currentUser, getCookie, handleAuth, isPublicPath, LOGIN_PATH, PIN_PATH, redirect, type User } from './auth.ts';
+import { handlePinSignIn, pinSignInOn, pinSignInStatus, turnOffPinSignIn, turnOnPinSignIn, visitorUser } from './pinsignin.ts';
 import {
   NotFoundError,
   ValidationError,
@@ -86,13 +86,13 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   const today = env.TEST_TODAY || todayIST();
   if (method !== 'GET' && !sameOrigin(request, url)) return error('Not allowed', 403);
 
-  if (pathname === '/api/me' && method === 'GET') {
-    return json({ email: user.email, role: user.role, name: user.name ?? null, device: Boolean(user.device), demo: Boolean(user.demo), ...(user.demo ? { demoPin: DEMO_PIN } : {}) });
-  }
+  if (pathname === '/api/me' && method === 'GET') return json({ email: user.email, role: user.role, name: user.name ?? null, device: Boolean(user.device), viewOnly: Boolean(user.viewOnly) });
 
-  // The demo copy has no Google Drive and no phones to pair, and can't manage demo access itself.
-  if (user.demo && (pathname.startsWith('/api/drive/') || pathname === '/api/devices/pair' || pathname.startsWith('/api/demo'))) {
-    return error('That’s switched off in the demo.', 403);
+  // A visitor who signed in with the PIN can look at everything the owner sees and change nothing.
+  // Every change in this app is a POST, PUT or DELETE, so refusing those here covers all of them
+  // (recording, editing, deleting, sending links, the backup download, asking the AI, settings).
+  if (user.viewOnly && (method !== 'GET' || pathname.startsWith('/api/drive/'))) {
+    return error('View only: this sign-in can’t change anything.', 403);
   }
 
   // The security guard's screen (owners can open it too).
@@ -106,15 +106,14 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
 
   if (user.role !== 'owner') return error('Not allowed', 403);
 
-  // ---- Demo access (Settings): a copy with made-up names, behind its own username and password.
-  // Turning it on needs the PIN: it opens a way into (a copy of) the app without Google sign-in.
-  if (pathname === '/api/demo/on' && method === 'POST') {
+  // ---- PIN sign-in for a visitor (Settings). Turning it on needs the owner's PIN:
+  // it lets someone without an approved Google account see real tenants.
+  if (pathname === '/api/pin-signin/on' && method === 'POST') {
     await requirePin(request, env);
-    return json({ success: true, demo: await turnOnDemo(env, url.origin) });
+    return json({ success: true, pinSignIn: await turnOnPinSignIn(env, url.origin) });
   }
-  if (pathname === '/api/demo/off' && method === 'POST') {
-    await turnOffDemo(env);
-    return json({ success: true, demo: await demoStatus(env, url.origin) });
+  if (pathname === '/api/pin-signin/off' && method === 'POST') {
+    return json({ success: true, pinSignIn: await turnOffPinSignIn(env, url.origin) });
   }
 
   // ---- Google Drive link for tenant IDs
@@ -189,7 +188,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
   }
 
   if (pathname === '/api/settings' && method === 'GET') {
-    return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env), idReading: { connected: Boolean(env.AI), last: await lastRead(env) }, upi: await getUpi(env.DB), demo: user.demo ? null : await demoStatus(env, url.origin) });
+    return json({ razorpay: razorpayStatus(env), webhookUrl: url.origin + WEBHOOK_PATH, drive: await drive.status(env), idReading: { connected: Boolean(env.AI), last: await lastRead(env) }, upi: await getUpi(env.DB), pinSignIn: user.viewOnly ? null : await pinSignInStatus(env, url.origin) });
   }
   if (pathname === '/api/dashboard' && method === 'GET') return json({ ...(await dashboard(env.DB, today)), idsWaiting: await waitingByUnit(env) });
   if (pathname === '/api/units' && method === 'GET') {
@@ -304,13 +303,13 @@ export default {
     const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
 
     // Razorpay calls this directly; it is checked by signature instead of sign-in.
-    // (A payment on a rent link made inside the demo is recorded in the demo copy.)
-    if (url.pathname === WEBHOOK_PATH && request.method === 'POST') return handleWebhook(request, env, env.DB, env.DB_DEMO);
+    if (url.pathname === WEBHOOK_PATH && request.method === 'POST') return handleWebhook(request, env, env.DB);
 
     if (url.pathname === PAIR_PATH) return handlePair(request, env, url);
-    if (url.pathname === DEMO_LOGIN_PATH) return handleDemoLogin(request, env, url);
+    if (url.pathname === PIN_PATH) return handlePinSignIn(request, env, url);
 
-    const authResponse = await handleAuth(request, env, url);
+    // The sign-in page shows the PIN box only while the owner has PIN sign-in turned on.
+    const authResponse = await handleAuth(request, env, url, url.pathname === LOGIN_PATH && (await pinSignInOn(env)));
     if (authResponse) return authResponse;
 
     if (!isApi && isPublicPath(url.pathname)) return env.ASSETS.fetch(request);
@@ -320,11 +319,7 @@ export default {
       const phone = await currentDevice(request, env);
       if (phone) user = { email: phone.label, role: 'security', name: phone.label, device: true };
     }
-    if (!user) {
-      // Demo sign-in: from here on the request only ever sees the demo database.
-      user = await demoUser(request, env);
-      if (user) env = demoEnv(env);
-    }
+    if (!user) user = await visitorUser(request, env);
     if (!user) {
       if (isApi) return error('Please sign in', 401);
       return redirect(`${LOGIN_PATH}?next=${encodeURIComponent(url.pathname + url.search)}`);
