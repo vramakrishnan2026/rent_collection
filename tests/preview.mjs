@@ -19,6 +19,7 @@ const types = { js: 'text/javascript', css: 'text/css', html: 'text/html', png: 
 
 const env = {
   DB,
+  DB_DEMO: makeD1({ empty: true }), // Settings › Demo access works here too (PIN 1234)
   GOOGLE_CLIENT_ID: 'preview',
   GOOGLE_CLIENT_SECRET: 'preview',
   OWNER_EMAILS: 'owner@example.com',
@@ -110,7 +111,10 @@ http
       new Request(BASE + req.url, { method: req.method, headers: req.headers, body: chunks.length ? Buffer.concat(chunks) : undefined, duplex: 'half', redirect: 'manual' }),
       env
     );
-    res.writeHead(r.status, Object.fromEntries(r.headers));
+    const headers = Object.fromEntries(r.headers);
+    const cookies = r.headers.getSetCookie(); // several cookies must stay separate headers
+    if (cookies.length) headers['set-cookie'] = cookies;
+    res.writeHead(r.status, headers);
     res.end(Buffer.from(await r.arrayBuffer()));
   })
   .listen(PORT, () => console.log(`Preview ready: ${BASE}/dev/login?as=owner  (or ?as=anita)`));

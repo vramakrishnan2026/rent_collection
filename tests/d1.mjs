@@ -2,10 +2,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 
-export function makeD1() {
+/** `empty: true` gives a database with no tables at all (like the demo database before first use). */
+export function makeD1({ empty = false } = {}) {
   const sqlite = new DatabaseSync(':memory:');
   const dir = new URL('../migrations/', import.meta.url);
-  for (const f of readdirSync(dir).sort()) sqlite.exec(readFileSync(new URL(f, dir), 'utf8'));
+  if (!empty) for (const f of readdirSync(dir).sort()) sqlite.exec(readFileSync(new URL(f, dir), 'utf8'));
 
   const fix = (v) => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v);
   const stmt = (sql, params = []) => ({
