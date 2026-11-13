@@ -38,11 +38,6 @@ export interface Ai {
 
 export interface Env {
   DB: D1Database;
-  // A second, separate database that only ever holds the demo copy (made-up names and numbers).
-  // Demo sign-ins are given this one in place of DB, so they cannot reach real data.
-  DB_DEMO?: D1Database;
-  /** Set by the Worker itself for a demo sign-in. Never a Cloudflare setting. */
-  DEMO?: boolean;
   ASSETS: Fetcher;
   AI?: Ai; // Cloudflare Workers AI: reads the name off tenant ID photos
 

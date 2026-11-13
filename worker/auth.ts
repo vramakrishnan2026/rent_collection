@@ -5,6 +5,7 @@ import type { Env } from './env';
 //   OWNER_EMAILS    - the whole app
 //   SECURITY_EMAILS - the security guard: the read-only rent status screen
 // After sign-in the Worker sets a signed session cookie that lasts 30 days.
+// The sign-in page can also show a PIN box for a view-only visitor: see pinsignin.ts.
 
 export type Role = 'owner' | 'security';
 
@@ -16,8 +17,8 @@ export interface User {
   name?: string;
   /** Signed in as a paired security phone (no Gmail). */
   device?: boolean;
-  /** Signed in with the demo username and password: sees the demo copy only, never real data. */
-  demo?: boolean;
+  /** Signed in with the visitor PIN (worker/pinsignin.ts): sees the owner's screens, can change nothing. */
+  viewOnly?: boolean;
 }
 
 export const LOGIN_PATH = '/auth/login';
@@ -26,9 +27,9 @@ export const CALLBACK_PATH = '/auth/callback';
 export const LOGOUT_PATH = '/auth/logout';
 
 const SESSION_COOKIE = 'cr_session';
-/** Cookie for the demo sign-in (worker/demo.ts). Kept apart from the real session on purpose. */
-export const DEMO_COOKIE = 'cr_demo';
-export const DEMO_LOGIN_PATH = '/auth/demo';
+/** Cookie and sign-in path for the visitor PIN (worker/pinsignin.ts). */
+export const VISITOR_COOKIE = 'cr_visitor';
+export const PIN_PATH = '/auth/pin';
 const STATE_COOKIE = 'cr_login_state';
 const SESSION_DAYS = 30;
 
@@ -91,7 +92,7 @@ export async function makeSession(env: Env, email: string, name?: string | null)
 
 export const SESSION_COOKIE_NAME = SESSION_COOKIE;
 
-/** Signs a small JSON value with the session key (used by the demo sign-in). */
+/** Signs a small JSON value with the session key (used by the visitor PIN sign-in). */
 export async function signValue(env: Env, value: Record<string, unknown>) {
   const payload = b64url(enc.encode(JSON.stringify(value)));
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await hmacKey(env), enc.encode(payload)));
@@ -159,7 +160,8 @@ export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt
 
 type LoginMessage = { kind: 'error' | 'info'; text: string } | null;
 
-export function loginPage(env: Env, message: LoginMessage = null, next = '/', status = 200, cookies: string[] = []) {
+/** `pin`: also show the visitor PIN box (only while the owner has PIN sign-in turned on). */
+export function loginPage(env: Env, message: LoginMessage = null, next = '/', status = 200, cookies: string[] = [], pin = false) {
   const configured = signInConfigured(env);
   const msg = !configured
     ? { kind: 'error' as const, text: 'Sign-in isn’t set up yet. Add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and OWNER_EMAILS in the Worker’s settings.' }
@@ -185,6 +187,10 @@ export function loginPage(env: Env, message: LoginMessage = null, next = '/', st
   .btn{display:flex;align-items:center;justify-content:center;gap:.75rem;width:100%;padding:.9rem 1rem;border-radius:1rem;
        border:1px solid #E2E8F0;background:#fff;color:#0F172A;font-weight:700;font-size:.95rem;text-decoration:none}
   .btn[aria-disabled=true]{opacity:.45;pointer-events:none}
+  .or{display:flex;align-items:center;gap:.75rem;margin:1.4rem 0 1rem;color:#94A3B8;font-size:.8rem}
+  .or::before,.or::after{content:"";flex:1;height:1px;background:#E2E8F0}
+  .pin input{width:100%;font-size:1.5rem;letter-spacing:.3rem;text-align:center;padding:.65rem;border:2px solid #E2E8F0;border-radius:1rem;font-weight:800;background:#fff;color:#0F172A}
+  .pin button{margin-top:.75rem;width:100%;padding:.9rem 1rem;border:0;border-radius:1rem;background:#0B1120;color:#fff;font-weight:700;font-size:.95rem}
   .msg{margin:0 0 1.25rem;padding:.75rem 1rem;border-radius:.9rem;font-size:.85rem;line-height:1.45;text-align:left}
   .error{background:#FFF1F2;color:#BE123C;border:1px solid #FFE4E6}
   .info{background:#F0FDF4;color:#15803D;border:1px solid #DCFCE7}
@@ -195,6 +201,9 @@ export function loginPage(env: Env, message: LoginMessage = null, next = '/', st
     .card{background:#111827;border-color:#1F2937;box-shadow:none}
     p.sub{color:#94A3B8}
     .btn{background:#1F2937;border-color:#334155;color:#F1F5F9}
+    .or::before,.or::after{background:#334155}
+    .pin input{background:#0B1120;color:#F1F5F9;border-color:#334155}
+    .pin button{background:#FCD34D;color:#0B1120}
     .error{background:#4C0519;color:#FDA4AF;border-color:#881337}
     .info{background:#064E3B;color:#6EE7B7;border-color:#065F46}
   }
@@ -208,6 +217,15 @@ export function loginPage(env: Env, message: LoginMessage = null, next = '/', st
     <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
     Sign in with Google
   </a>
+  ${
+    pin
+      ? `<div class="or">or</div>
+  <form class="pin" method="post" action="${PIN_PATH}">
+    <input name="pin" inputmode="numeric" maxlength="9" autocomplete="off" required placeholder="PIN" aria-label="PIN">
+    <button type="submit">Sign in with PIN</button>
+  </form>`
+      : ''
+  }
   <p style="margin:1.4rem 0 0;font-size:.9rem"><a href="/auth/pair" style="color:inherit;font-weight:700">${GUARD}? Enter your code</a></p>
   <footer><a href="/privacy">Privacy policy</a></footer>
 </main></body></html>`;
@@ -218,13 +236,13 @@ export function loginPage(env: Env, message: LoginMessage = null, next = '/', st
 
 // ---------- routes ----------
 
-export async function handleAuth(request: Request, env: Env, url: URL): Promise<Response | null> {
+export async function handleAuth(request: Request, env: Env, url: URL, pinOn = false): Promise<Response | null> {
   const { pathname } = url;
 
   if (pathname === LOGIN_PATH) {
     if (await currentUser(request, env)) return redirect(safeNext(url.searchParams.get('next')));
     const notice = url.searchParams.get('signed_out') ? { kind: 'info' as const, text: 'You’ve been signed out.' } : null;
-    return loginPage(env, notice, safeNext(url.searchParams.get('next')));
+    return loginPage(env, notice, safeNext(url.searchParams.get('next')), 200, [], pinOn);
   }
 
   if (pathname === START_PATH) {
@@ -270,13 +288,11 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
     }
 
     const session = await makeSession(env, email, firstName);
-    return redirect(safeNext(next || '/'), [clearState, cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400), cookie(DEMO_COOKIE, '', 0)]);
+    return redirect(safeNext(next || '/'), [clearState, cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400)]);
   }
 
   if (pathname === LOGOUT_PATH) {
-    // A demo visitor goes back to the demo sign-in page, everyone else to Google sign-in.
-    const back = getCookie(request, DEMO_COOKIE) && !getCookie(request, SESSION_COOKIE) ? DEMO_LOGIN_PATH : LOGIN_PATH;
-    return redirect(`${back}?signed_out=1`, [cookie(SESSION_COOKIE, '', 0), cookie(DEMO_COOKIE, '', 0)]);
+    return redirect(`${LOGIN_PATH}?signed_out=1`, [cookie(SESSION_COOKIE, '', 0), cookie(VISITOR_COOKIE, '', 0)]);
   }
 
   return null;

@@ -24,7 +24,6 @@ A private rent-collection app for **Challaghatta Home**: 24 units, numbered G1�
 | Secrets set | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OWNER_EMAILS` |
 | Google | A separate Google Cloud project on the owner's app Gmail. The consent screen was published (In production) after filling in Branding. Redirect URIs are `/auth/callback` and `/api/drive/callback`. |
 | Razorpay | **Test mode**; KYC is under process. The test webhook was being set up: the webhook list was empty when last checked, so check it exists. |
-| D1 demo database | `rent_collection_demo`, binding `DB_DEMO`, no ID in `wrangler.jsonc`: Wrangler creates it on the first deploy after the demo-login change. **Check it appeared** (Storage & Databases › D1). |
 | Workers AI | `ai` binding in `wrangler.jsonc` (reads ID cards) |
 
 Secret **values** are only in Cloudflare, never in this repo.
@@ -109,27 +108,23 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Llama 3.3 70B (falling back to Llama 4 Scout) only finds and phrases the answer, and is told to say when the data doesn't have it.
    - No phone numbers, addresses or IDs are included. The conversation history is kept only on the page, for that visit.
 
-## Demo access (built 13 Nov 2026, for Razorpay's KYC website check)
+## PIN sign-in for a visitor (built 13 Nov 2026, for Razorpay's KYC website check)
 
-Razorpay asked to see inside the app, including the login. The owner chose a **demo login on a copy of the real data with the names changed**, rather than a screen recording or adding the reviewer's Gmail.
+Razorpay asked to sign in and see inside the app. Two decisions by the owner, in order:
 
-- **Where:** Settings › Demo access (PIN to turn on). It shows the link (`/auth/demo`), the username (`demo`) and a random password, which the owner can look up again there. Code: `worker/demo.ts`.
-- **Separate database (`DB_DEMO`).** A demo sign-in is given the demo database in place of the real one for the whole request (`demoEnv`), so no screen or API can reach real tenants. This is why it isn't a flag on rows in the main database.
-- **What the copy holds** is listed column by column in `DEMO_COLUMNS`:
-  - Kept: units, rents, deposits, dates and payment amounts (the owner's real figures, so the screens look real).
-  - Made up: names, phone numbers and every record ID.
-  - Left out: notes, addresses, ID photos, payment references, rent links, settings (Drive link, UPI ID), phones and reminders.
-  - A test fails if a new column in those tables isn't put on one of the lists, so a later migration can't leak into the demo by accident.
-- **Inside the demo:**
-  - Its own PIN (`0000`), so the demo can't be used to guess the owner's.
-  - Razorpay with **test keys only**. With live keys the demo has no Razorpay at all.
-  - No Google Drive and no pairing of phones.
-  - WhatsApp/SMS open with no number, and there is no Call button, because the numbers are made up and could be a stranger's.
-  - A test payment on a link made in the demo is recorded in the demo copy (the webhook checks the demo database second).
-- **Ending it:** it stops after 30 days. Turn off stops it at once and empties the copy. Turning it on again makes a new copy and password, and signs earlier visitors out.
-- **Safety net:** if `DB_DEMO` were ever pointed at the real database, turning demo access on or off refuses and changes nothing (a random marker in the real `settings` table is how it tells).
-- **No migration.** The demo's tables are copied from the real database's own table definitions each time, so they always match.
-- After KYC is approved: **turn demo access off**.
+1. First a **demo login on a copy with made-up names** was built and deployed (`/auth/demo`, a second D1 database). Razorpay then said they check **the app's own login only**, so the owner had it **removed the same day**.
+2. In its place: a **PIN box on the real sign-in page, next to Google sign-in**. Asked whether the PIN should open a made-up copy or the real data, the owner chose **the real data**.
+
+Because it opens real tenants to someone outside, it is kept tight (`worker/pinsignin.ts`):
+
+- **Off by default.** Settings › PIN sign-in, the owner's PIN to turn on. The PIN box is only on the sign-in page while it is on.
+- **Its own 8-digit random PIN**, shown in Settings. Never the owner's PIN for locked actions.
+- **View only.** A PIN sign-in gets the owner's screens, but `index.ts` refuses every POST, PUT and DELETE for it (and the Drive routes). That covers recording, editing, deleting, sending links, the backup, the AI questions and settings. *This was not asked for by the owner; it was added as the safe default and they were told. If Razorpay needs to try an action, ask the owner before loosening it.*
+- **Guessing:** five wrong PINs in a row pause PIN sign-in for 15 minutes.
+- **Ending it:** stops after 14 days; Turn off stops it at once; New PIN signs earlier visitors out. A PIN sign-in lasts 12 hours.
+- After KYC is approved: **turn PIN sign-in off**.
+
+Left over from the demo: the D1 database **`rent_collection_demo`** still exists in Cloudflare (the app no longer uses it). The owner can delete it under Storage & Databases › D1. Migration `0010` removes the two demo settings.
 
 ## Wanted next (discussed 13 Nov 2026, not built)
 
@@ -157,5 +152,5 @@ Also mentioned, lower priority:
 - `npm test` runs the rules and API tests (Node 22+, no install).
 - `npm run preview` starts a local copy with made-up tenants: open `http://localhost:8787/dev/login?as=owner` (or `?as=anita`).
 - `npm run lint` type-checks.
-- A schema change means adding a new file in `migrations/` (the next is `0010_…`). Never edit an applied migration.
+- A schema change means adding a new file in `migrations/` (the next is `0011_…`). Never edit an applied migration.
 - Commit to `main` only when it's ready: every push deploys live.

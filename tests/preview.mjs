@@ -19,7 +19,6 @@ const types = { js: 'text/javascript', css: 'text/css', html: 'text/html', png: 
 
 const env = {
   DB,
-  DB_DEMO: makeD1({ empty: true }), // Settings › Demo access works here too (PIN 1234)
   GOOGLE_CLIENT_ID: 'preview',
   GOOGLE_CLIENT_SECRET: 'preview',
   OWNER_EMAILS: 'owner@example.com',
