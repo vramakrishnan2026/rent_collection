@@ -40,6 +40,7 @@ Secret **values** are only in Cloudflare, never in this repo.
   - Their move-in date is backdated, and the rent entered is their **current** rent.
   - Charging starts from **"Charge rent from"** (the 1st of next month by default; the owner started using the app from **1 Dec 2026**). Nothing earlier is asked for.
   - **The next 5% increase date is entered per tenant**, then repeats every 11 months.
+  - **If the increase date is left empty**, the rent entered is still charged as entered, and the next increase falls on the next 11-month mark counted from the move-in date. (Fixed 14 Nov 2026: the app used to add every past 11-month increase on top of the rent entered, so T2 showed ₹4,961 for a current rent of ₹4,500. The owner's point: "current rent" means what the tenant pays now.)
 - **Rent-free unit** (Anita's) needs the **PIN** to turn on.
 
 **Payments and links**

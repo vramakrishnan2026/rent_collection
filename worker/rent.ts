@@ -74,6 +74,14 @@ export const chargeStart = (t: TenancyTerms) => (t.bill_from && t.bill_from > t.
 /** The date the n-th 5% increase starts (n = 1, 2, ...) for this tenancy. */
 export function increaseOn(t: TenancyTerms, n: number): string {
   if (t.next_increase_on) return firstOnOrAfter(addMonths(t.next_increase_on, ESCALATION_EVERY_MONTHS * (n - 1)));
+  // Here before the app, with no increase date entered: the rent entered is what they pay when
+  // charging starts, so the 11-month marks that passed before then are already in it and must
+  // not be added again. The first increase is the next mark (counted from move-in) after that.
+  if (t.bill_from && t.bill_from > t.start_date) {
+    let passed = 0;
+    while (passed < 400 && increaseDate(t.start_date, passed + 1) <= t.bill_from) passed++;
+    return increaseDate(t.start_date, passed + n);
+  }
   return increaseDate(t.start_date, n);
 }
 
