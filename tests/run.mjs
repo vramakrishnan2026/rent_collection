@@ -716,6 +716,164 @@ await test('Ask: answers from a read-only summary with figures worked out by the
 });
 env.AI.run = prevAI;
 
+// --- A UPI QR code from Razorpay goes with each rent link, for the same amount
+console.log('QR code with the rent link');
+{
+  const sql = (q, ...p) => DB.sqlite.prepare(q).all(...p);
+  const qrFake = { fail: false, scans: {}, made: 0 };
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const u = String(input);
+    if (!u.startsWith('https://api.razorpay.com/')) return before(input, init);
+    const method = init.method || 'GET';
+    rzCalls.push({ url: u, method, body: init.body ? JSON.parse(init.body) : null });
+    const n = ++qrFake.made;
+    if (u.endsWith('/payment_links') && method === 'POST') return Response.json({ id: `plink_q${n}`, short_url: `https://rzp.io/rzp/q${n}`, status: 'created' });
+    if (u.endsWith('/payments/qr_codes') && method === 'POST') {
+      return qrFake.fail
+        ? Response.json({ error: { description: 'QR codes are not enabled for this account' } }, { status: 400 })
+        : Response.json({ id: `qr_T${n}`, entity: 'qr_code', image_url: `https://rzp.io/i/qr${n}`, status: 'active' });
+    }
+    const scans = u.match(/\/payments\/qr_codes\/([^/]+)\/payments/);
+    if (scans) return Response.json({ entity: 'collection', items: qrFake.scans[scans[1]] || [] });
+    return Response.json({ status: 'created', payments: [] });
+  };
+  const calls = (method, re) => rzCalls.filter((c) => c.method === method && re.test(c.url));
+  const newTenant = async (code, phone) => {
+    assert.equal((await call('/api/units', { method: 'POST', body: { code, floor: 'QR' } })).status, 201);
+    const r = await call('/api/tenancies', { method: 'POST', body: { unit_code: code, contact_name: `Scan ${code}`, phone, start_date: '2026-08-01', base_rent: 6000, deposit: 0 } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body.id;
+  };
+  const getLink = (id) => call(`/api/tenancies/${id}/link`, { method: 'POST', body: {} });
+  const row = (id) => ({ ...sql('SELECT status, qr_id, qr_image_url, qr_status FROM payment_links WHERE id = ?', id)[0] });
+  const credited = (qrId, payId, rupees) => ({
+    event: 'qr_code.credited',
+    payload: {
+      payment: { entity: { id: payId, amount: rupees * 100, status: 'captured', method: 'upi', created_at: Math.floor(Date.parse('2026-11-12T06:00:00Z') / 1000) } },
+      qr_code: { entity: { id: qrId, usage: 'multiple_use', type: 'upi_qr' } },
+    },
+  });
+  const q1 = await newTenant('Q1', '9876511111');
+  let first;
+
+  await test('if Razorpay will not make a QR (not switched on), the link still works and says why', async () => {
+    qrFake.fail = true;
+    const r = await getLink(q1);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.link.short_url.startsWith('https://rzp.io/rzp/'));
+    assert.deepEqual([r.body.qr, r.body.qrError], [null, 'QR codes are not enabled for this account']);
+    assert.ok(r.body.whatsappUrl && r.body.amount > 0);
+    assert.deepEqual(row(r.body.link.id), { status: 'created', qr_id: null, qr_image_url: null, qr_status: null });
+    first = r.body;
+    qrFake.fail = false;
+  });
+  await test('the QR is made for the same amount as the link, and reused with it', async () => {
+    rzCalls.length = 0;
+    const r = await getLink(q1);
+    assert.equal(r.body.link.id, first.link.id, 'same link');
+    assert.equal(calls('POST', /\/payment_links$/).length, 0);
+    const made = calls('POST', /\/payments\/qr_codes$/);
+    assert.equal(made.length, 1);
+    assert.deepEqual(
+      [made[0].body.type, made[0].body.usage, made[0].body.fixed_amount, made[0].body.payment_amount, made[0].body.notes.link_id, made[0].body.notes.unit],
+      ['upi_qr', 'multiple_use', true, first.amount * 100, first.link.id, 'Q1']
+    );
+    assert.equal(made[0].body.close_by, undefined, 'no 2-hour limit: it stays until paid');
+    assert.match(r.body.qr.imageUrl, /^https:\/\/rzp\.io\/i\/qr/);
+    assert.equal(r.body.qrError, null);
+    assert.equal(row(first.link.id).qr_status, 'active');
+    assert.ok(!r.body.message.includes('rzp.io/i/'), 'the QR is shown in the app, not added to the message');
+    rzCalls.length = 0;
+    const again = await getLink(q1);
+    assert.equal(again.body.qr.imageUrl, r.body.qr.imageUrl);
+    assert.equal(calls('POST', /qr_codes|payment_links$/).length, 0, 'nothing new made');
+    const unit = (await call('/api/units/Q1')).body;
+    assert.deepEqual([unit.current.links[0].qr_status, unit.current.links[0].qr_image_url], ['active', r.body.qr.imageUrl]);
+  });
+  await test('when the amount owed changes, the old link and its QR are closed and new ones made', async () => {
+    const old = row(first.link.id);
+    assert.equal((await call('/api/payments', { method: 'POST', body: { tenancy_id: q1, amount: 1000, paid_on: today, method: 'cash' } })).status, 201);
+    rzCalls.length = 0;
+    const r = await getLink(q1);
+    assert.equal(r.body.amount, first.amount - 1000);
+    assert.notEqual(r.body.link.id, first.link.id);
+    assert.equal(calls('POST', new RegExp(`/payment_links/${first.link.id}/cancel$`)).length, 1);
+    assert.equal(calls('POST', new RegExp(`/payments/qr_codes/${old.qr_id}/close$`)).length, 1);
+    assert.deepEqual([row(first.link.id).status, row(first.link.id).qr_status], ['cancelled', 'closed']);
+    assert.equal(calls('POST', /\/payments\/qr_codes$/)[0].body.payment_amount, (first.amount - 1000) * 100);
+    assert.notEqual(row(r.body.link.id).qr_id, old.qr_id);
+    first = r.body;
+  });
+  await test('webhook: a scanned QR records the payment once, cancels the link and closes the QR', async () => {
+    const qrId = row(first.link.id).qr_id;
+    rzCalls.length = 0;
+    const paidBefore = sql('SELECT COUNT(*) AS n FROM payments WHERE tenancy_id = ?', q1)[0].n;
+    assert.equal((await webhook(credited(qrId, 'pay_QR1', first.amount), 'wrong')).status, 401, 'unsigned calls are refused');
+    assert.equal((await webhook(credited(qrId, 'pay_QR1', first.amount))).status, 200);
+    assert.equal((await webhook(credited(qrId, 'pay_QR1', first.amount))).status, 200, 'Razorpay may send it twice');
+    const pays = sql("SELECT amount, method, paid_on, rzp_payment_id, reference FROM payments WHERE tenancy_id = ? AND method = 'razorpay'", q1);
+    assert.deepEqual(pays.map((p) => ({ ...p })), [{ amount: first.amount, method: 'razorpay', paid_on: '2026-11-12', rzp_payment_id: 'pay_QR1', reference: first.link.id }]);
+    assert.equal(sql('SELECT COUNT(*) AS n FROM payments WHERE tenancy_id = ?', q1)[0].n, paidBefore + 1);
+    assert.deepEqual([row(first.link.id).status, row(first.link.id).qr_status], ['paid', 'closed']);
+    assert.equal(calls('POST', new RegExp(`/payment_links/${first.link.id}/cancel$`)).length, 1, 'the link can no longer be paid as well');
+    assert.equal(calls('POST', new RegExp(`/payments/qr_codes/${qrId}/close$`)).length, 1);
+    const unit = (await call('/api/units/Q1')).body;
+    assert.equal(unit.current.outstanding, 0);
+    // Razorpay then tells us the link was cancelled: it stays "paid".
+    assert.equal((await webhook({ event: 'payment_link.cancelled', payload: { payment_link: { entity: { id: first.link.id, status: 'cancelled' } } } })).status, 200);
+    assert.equal(row(first.link.id).status, 'paid');
+    assert.equal((await getLink(q1)).status, 400, 'nothing left to collect');
+  });
+  await test('webhook: a QR we did not make, or one that was only created or closed, is ignored', async () => {
+    const n = sql('SELECT COUNT(*) AS n FROM payments')[0].n;
+    assert.equal((await webhook(credited('qr_SOMEONE_ELSE', 'pay_QR9', 500))).status, 200);
+    assert.equal((await webhook({ event: 'qr_code.created', payload: { qr_code: { entity: { id: 'qr_X' } } } })).status, 200);
+    assert.equal((await webhook({ event: 'qr_code.closed', payload: { qr_code: { entity: { id: row(first.link.id).qr_id } } } })).status, 200);
+    assert.equal(sql('SELECT COUNT(*) AS n FROM payments')[0].n, n);
+  });
+  await test('Check (and the daily check) finds a QR payment the webhook missed', async () => {
+    const q2 = await newTenant('Q2', '9876522222');
+    const r = (await getLink(q2)).body;
+    const qrId = row(r.link.id).qr_id;
+    let chk = await call(`/api/links/${r.link.id}/refresh`, { method: 'POST', body: {} });
+    assert.equal(chk.body.status, 'created');
+    assert.equal(row(r.link.id).qr_status, 'active');
+    qrFake.scans[qrId] = [
+      { id: 'pay_QR_FAILED', amount: r.amount * 100, status: 'failed', created_at: 1794400000 },
+      { id: 'pay_QR2', amount: r.amount * 100, status: 'captured', created_at: Math.floor(Date.parse('2026-11-11T20:00:00Z') / 1000) },
+    ];
+    rzCalls.length = 0;
+    chk = await call(`/api/links/${r.link.id}/refresh`, { method: 'POST', body: {} });
+    assert.equal(chk.body.status, 'paid');
+    assert.deepEqual(sql("SELECT amount, paid_on, rzp_payment_id FROM payments WHERE tenancy_id = ?", q2).map((p) => ({ ...p })), [{ amount: r.amount, paid_on: '2026-11-12', rzp_payment_id: 'pay_QR2' }]);
+    assert.deepEqual([row(r.link.id).status, row(r.link.id).qr_status], ['paid', 'closed']);
+    assert.equal(calls('POST', new RegExp(`/payment_links/${r.link.id}/cancel$`)).length, 1);
+    assert.equal(calls('POST', new RegExp(`/payments/qr_codes/${qrId}/close$`)).length, 1);
+    assert.equal((await webhook(credited(qrId, 'pay_QR2', r.amount))).status, 200);
+    assert.equal(sql('SELECT COUNT(*) AS n FROM payments WHERE tenancy_id = ?', q2)[0].n, 1, 'the late webhook does not record it again');
+  });
+  await test('paid through the link instead: the QR for the same rent is closed', async () => {
+    const q3 = await newTenant('Q3', '9876533333');
+    const r = (await getLink(q3)).body;
+    const qrId = row(r.link.id).qr_id;
+    rzCalls.length = 0;
+    const res = await webhook({
+      event: 'payment_link.paid',
+      payload: { payment_link: { entity: { id: r.link.id, status: 'paid' } }, payment: { entity: { id: 'pay_LINK3', amount: r.amount * 100, status: 'captured', created_at: 1794400000 } } },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual([row(r.link.id).status, row(r.link.id).qr_status], ['paid', 'closed']);
+    assert.equal(calls('POST', new RegExp(`/payments/qr_codes/${qrId}/close$`)).length, 1);
+    assert.equal(sql('SELECT COUNT(*) AS n FROM payments WHERE tenancy_id = ?', q3)[0].n, 1);
+    // A scan that slipped in before the QR closed is still recorded (money did arrive), not lost.
+    assert.equal((await webhook(credited(qrId, 'pay_QR3_LATE', r.amount))).status, 200);
+    assert.equal(sql('SELECT COUNT(*) AS n FROM payments WHERE tenancy_id = ?', q3)[0].n, 2);
+  });
+  globalThis.fetch = before;
+  DB.sqlite.exec("DELETE FROM payments WHERE tenancy_id IN (SELECT id FROM tenancies WHERE unit_code IN ('Q1','Q2','Q3')); DELETE FROM payment_links WHERE tenancy_id IN (SELECT id FROM tenancies WHERE unit_code IN ('Q1','Q2','Q3')); DELETE FROM people WHERE tenancy_id IN (SELECT id FROM tenancies WHERE unit_code IN ('Q1','Q2','Q3')); DELETE FROM tenancies WHERE unit_code IN ('Q1','Q2','Q3'); DELETE FROM units WHERE code IN ('Q1','Q2','Q3')");
+}
+
 // --- Deleting a past tenant (a test entry or a mistake), with everything recorded for them
 console.log('Deleting a past tenant');
 await test('a past tenant can be deleted with the PIN: their payments, people and links go too, nothing else', async () => {

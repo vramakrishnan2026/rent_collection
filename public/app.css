@@ -332,3 +332,8 @@ details.guide > a.btn.block { width: calc(100% - 2.2rem); }
 .bubble.user { align-self: flex-end; background: var(--brand); color: var(--bg); }
 .bubble.assistant { align-self: flex-start; background: var(--soft); }
 .bubble.thinking { color: var(--muted); font-style: italic; }
+
+/* QR code that goes with a rent link */
+.qr{margin-top:.8rem;text-align:center}
+.qr img{width:100%;max-width:20rem;height:auto;border-radius:1rem;background:#fff;padding:.5rem;border:1px solid var(--line,#E2E8F0)}
+.qr .note{text-align:left}

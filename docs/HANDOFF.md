@@ -108,6 +108,20 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Llama 3.3 70B (falling back to Llama 4 Scout) only finds and phrases the answer, and is told to say when the data doesn't have it.
    - No phone numbers, addresses or IDs are included. The conversation history is kept only on the page, for that visit.
 
+## QR code with every rent link (built 14 Nov 2026)
+
+The owner's tenants do blue-collar work and many don't read easily, so they asked whether a link is the easiest way to pay. A QR code is what the tenants already use at shops, so one is now made with every link. The owner asked for it to be **made by Razorpay, along with the link, for the same amount**.
+
+- **How it's made:** right after the link, `ensureQr` in `worker/razorpay.ts` asks Razorpay for a `upi_qr` code, **multiple use with a fixed amount**. Not "single use": Razorpay closes a single-use QR after 2 hours at most, and rent is often paid days later. The app closes the QR itself once the rent is paid.
+- **One rent, two ways to pay:** when the QR is paid the link is cancelled at Razorpay; when the link is paid (or cancelled, expired or replaced because the amount changed) the QR is closed. A scan that slips in before the QR closes is still recorded, never dropped.
+- **Recording:** webhook event `qr_code.credited`; the Check button and the 9 AM daily check also ask Razorpay for payments on the QR.
+- **Where it shows:** Send sheet › Show QR code to scan, and ▦ QR beside an unpaid link on the unit page. It is **not** put in the WhatsApp message: a tenant can't scan a QR that is on their own phone, and a third way to pay in the text would confuse. It is for scanning from the owner's phone in person.
+- **Must be switched on by Razorpay** ("on-demand feature", via Razorpay Support). Until then, or if making one fails, the link is unaffected and the sheet says why there is no QR.
+- **Not yet tried against the real Razorpay:** it was built from Razorpay's documentation with the API faked in tests, because QR Codes weren't active on the account. **Watch the first real QR payment**: check it appears on the unit and that the link shows Paid. If the QR is refused with an error about the amount or usage, that message appears on the Send sheet.
+- **Owner to do:** tick `qr_code.credited` on the live webhook in Razorpay.
+- **Direct UPI ID:** the owner also asked for a Settings section for their UPI ID, to go out with the link. That already existed (Settings › Direct UPI payments; the message says "Or pay by UPI to … and send the screenshot"), so nothing was built.
+- Possible next step, not asked for: let Anita show a unit's QR from her phone.
+
 ## Deleting a past tenant (built 14 Nov 2026)
 
 The owner had added test tenants and moved them out, and there was no way to remove them (the existing delete is only for a current tenant with no payments). They asked how to remove them from the database; a button was built instead of hand-editing D1.
@@ -171,5 +185,5 @@ Also mentioned, lower priority:
 - `npm test` runs the rules and API tests (Node 22+, no install).
 - `npm run preview` starts a local copy with made-up tenants: open `http://localhost:8787/dev/login?as=owner` (or `?as=anita`).
 - `npm run lint` type-checks.
-- A schema change means adding a new file in `migrations/` (the next is `0011_…`). Never edit an applied migration.
+- A schema change means adding a new file in `migrations/` (the next is `0012_…`). Never edit an applied migration.
 - Commit to `main` only when it's ready: every push deploys live.

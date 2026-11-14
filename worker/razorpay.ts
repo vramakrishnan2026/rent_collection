@@ -6,6 +6,12 @@ import { NotFoundError, ValidationError, getSetting, getTenancy, recordRazorpayP
 // The app creates a link for what the tenant owes; you send it from your phone with one tap
 // (WhatsApp or SMS). When the tenant pays, Razorpay calls our webhook and the payment is
 // recorded automatically. A daily check catches anything the webhook missed.
+//
+// Each link also gets a UPI QR code from Razorpay for the same amount (Razorpay › QR Codes),
+// for a tenant who would rather scan than open a link. The link and the QR are two ways to pay
+// the same rent: when one is paid the other is closed, so it can't be paid twice.
+// QR codes have to be switched on by Razorpay for the account. Until then (or if making one
+// fails for any reason) the link works exactly as before, just without a QR.
 
 const API = 'https://api.razorpay.com/v1';
 export const WEBHOOK_PATH = '/api/razorpay/webhook';
@@ -47,6 +53,56 @@ export interface LinkRow {
   sent_at: string | null;
   sent_via: string | null;
   created_at: string;
+  qr_id: string | null;
+  qr_image_url: string | null;
+  qr_status: string | null;
+}
+
+// ---------- QR code that goes with a link ----------
+
+/**
+ * Makes the QR for a link if it doesn't have a working one. Never throws: a QR is an extra.
+ * It is "multiple use, fixed amount" because Razorpay's one-time QR codes close after 2 hours
+ * at most, and rent is often paid days after the message. We close it ourselves once paid.
+ */
+async function ensureQr(env: Env, db: D1Database, link: LinkRow, unit: string): Promise<{ qr: { imageUrl: string } | null; qrError: string | null }> {
+  if (link.qr_id && link.qr_status === 'active' && link.qr_image_url) return { qr: { imageUrl: link.qr_image_url }, qrError: null };
+  try {
+    const made = await rzp(env, '/payments/qr_codes', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'upi_qr',
+        name: `Rent ${unit}`.slice(0, 40),
+        usage: 'multiple_use',
+        fixed_amount: true,
+        payment_amount: link.amount * 100,
+        description: (link.description || `Rent ${unit}`).slice(0, 200),
+        notes: { tenancy_id: link.tenancy_id, unit, link_id: link.id, property: PROPERTY },
+      }),
+    });
+    if (!made?.id || !made?.image_url) throw new Error('Razorpay did not return a QR code');
+    await db.prepare("UPDATE payment_links SET qr_id = ?, qr_image_url = ?, qr_status = 'active' WHERE id = ?").bind(String(made.id), String(made.image_url), link.id).run();
+    link.qr_id = String(made.id);
+    link.qr_image_url = String(made.image_url);
+    link.qr_status = 'active';
+    return { qr: { imageUrl: link.qr_image_url }, qrError: null };
+  } catch (e: any) {
+    console.error('QR code not made', link.id, e);
+    return { qr: null, qrError: String(e?.message || 'Razorpay could not make a QR code').slice(0, 200) };
+  }
+}
+
+/** Stops a link's QR from taking any (more) money. Safe to call for a link without one. */
+async function closeQr(env: Env, db: D1Database, link: LinkRow) {
+  if (!link.qr_id || link.qr_status !== 'active') return;
+  await rzp(env, `/payments/qr_codes/${encodeURIComponent(link.qr_id)}/close`, { method: 'POST' }).catch((e) => console.error('QR close failed', link.qr_id, e));
+  await db.prepare("UPDATE payment_links SET qr_status = 'closed' WHERE id = ?").bind(link.id).run();
+  link.qr_status = 'closed';
+}
+
+/** Paid by QR: the payment link for the same rent must not be payable any more. */
+async function cancelLinkAtRazorpay(env: Env, link: LinkRow) {
+  await rzp(env, `/payment_links/${encodeURIComponent(link.id)}/cancel`, { method: 'POST' }).catch((e) => console.error('Cancel failed', link.id, e));
 }
 
 /** Epoch seconds → India date. */
@@ -66,8 +122,35 @@ export async function syncLink(env: Env, db: D1Database, link: LinkRow): Promise
       test: Boolean(link.test),
     });
   }
-  const status = String(data.status || link.status);
+  let status = String(data.status || link.status);
+
+  // Not paid through the link: was its QR code scanned and paid?
+  if (status === 'created' && link.qr_id && link.qr_status === 'active') {
+    const scans: any = await rzp(env, `/payments/qr_codes/${encodeURIComponent(link.qr_id)}/payments?count=10`).catch((e) => {
+      console.error('QR check failed', link.qr_id, e);
+      return null;
+    });
+    let paidByQr = false;
+    for (const p of scans?.items || []) {
+      if (p.status !== 'captured' || !p.id) continue;
+      paidByQr = true;
+      await recordRazorpayPayment(db, {
+        tenancyId: link.tenancy_id,
+        amount: Math.round(Number(p.amount) / 100),
+        paidOn: istDate(Number(p.created_at) || Date.now() / 1000),
+        paymentId: String(p.id),
+        linkId: link.id,
+        test: Boolean(link.test),
+      });
+    }
+    if (paidByQr) {
+      await cancelLinkAtRazorpay(env, link);
+      status = 'paid';
+    }
+  }
+
   if (status !== link.status) await db.prepare('UPDATE payment_links SET status = ? WHERE id = ?').bind(status, link.id).run();
+  if (status !== 'created') await closeQr(env, db, link); // paid, cancelled or expired: the QR goes too
   return status;
 }
 
@@ -171,6 +254,7 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
     if (l === link) continue;
     await rzp(env, `/payment_links/${encodeURIComponent(l.id)}/cancel`, { method: 'POST' }).catch((e) => console.error('Cancel failed', e));
     await db.prepare("UPDATE payment_links SET status = 'cancelled' WHERE id = ?").bind(l.id).run();
+    await closeQr(env, db, l);
   }
 
   if (!link) {
@@ -196,8 +280,9 @@ export async function linkForTenancy(env: Env, db: D1Database, tenancyId: string
     link = (await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(created.id).first<LinkRow>())!;
   }
 
+  const { qr, qrError } = await ensureQr(env, db, link, t.unit_code);
   const message = messageFor(t.contact_name, t.unit_code, amount, description, link.short_url, upi);
-  return { link, amount, description, message, test, upiOnly: false, ...shareLinks(t.whatsapp, t.phone, message) };
+  return { link, amount, description, message, test, upiOnly: false, qr, qrError, ...shareLinks(t.whatsapp, t.phone, message) };
 }
 
 export async function markSent(db: D1Database, linkId: string, via: string) {
@@ -244,6 +329,30 @@ export async function handleWebhook(request: Request, env: Env, db: D1Database):
     return new Response('Bad JSON', { status: 400 });
   }
 
+  // A QR code that goes with one of our links was scanned and paid.
+  const qrEntity = event?.payload?.qr_code?.entity;
+  if (qrEntity?.id) {
+    if (event.event !== 'qr_code.credited') return new Response('ok');
+    const qrLink = await db.prepare('SELECT * FROM payment_links WHERE qr_id = ?').bind(String(qrEntity.id)).first<LinkRow>();
+    const pay = event?.payload?.payment?.entity;
+    if (!qrLink || !pay?.id) return new Response('ok'); // a QR made outside this app
+    if (pay.status && pay.status !== 'captured') return new Response('ok');
+    await recordRazorpayPayment(db, {
+      tenancyId: qrLink.tenancy_id,
+      amount: Math.round(Number(pay.amount) / 100),
+      paidOn: istDate(Number(pay.created_at) || Date.now() / 1000),
+      paymentId: String(pay.id),
+      linkId: qrLink.id,
+      test: Boolean(qrLink.test),
+    });
+    if (qrLink.status === 'created') {
+      await db.prepare("UPDATE payment_links SET status = 'paid' WHERE id = ?").bind(qrLink.id).run();
+      await cancelLinkAtRazorpay(env, qrLink);
+    }
+    await closeQr(env, db, qrLink);
+    return new Response('ok');
+  }
+
   const linkEntity = event?.payload?.payment_link?.entity;
   if (!linkEntity?.id) return new Response('ok'); // not a payment-link event: ignore
   const link = await db.prepare('SELECT * FROM payment_links WHERE id = ?').bind(String(linkEntity.id)).first<LinkRow>();
@@ -262,8 +371,11 @@ export async function handleWebhook(request: Request, env: Env, db: D1Database):
       });
     }
     await db.prepare("UPDATE payment_links SET status = 'paid' WHERE id = ?").bind(link.id).run();
+    await closeQr(env, db, link); // paid by link: the QR for the same rent is closed
   } else if (event.event === 'payment_link.cancelled' || event.event === 'payment_link.expired') {
-    await db.prepare('UPDATE payment_links SET status = ? WHERE id = ?').bind(event.event.split('.')[1], link.id).run();
+    // (When we cancel a link because its QR was paid, it is already 'paid' here: leave it.)
+    if (link.status === 'created') await db.prepare('UPDATE payment_links SET status = ? WHERE id = ?').bind(event.event.split('.')[1], link.id).run();
+    await closeQr(env, db, link);
   }
   return new Response('ok');
 }
