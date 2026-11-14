@@ -76,6 +76,21 @@ await test('existing tenant: backdated move-in, charged from the coming month, o
   assert.deepEqual(later.periods.map((p) => [p.month, p.rent]), [['2026-12', 11000], ['2027-01', 11000], ['2027-02', 11000], ['2027-03', 11000], ['2027-04', 11550], ['2027-05', 11550]]);
   assert.equal(later.nextIncreaseOn, '2028-03-01'); // then every 11 months
 });
+await test('existing tenant with no increase date: the rent entered is charged as entered, next increase at the next 11-month mark', () => {
+  // Moved in 16 Jun 2024, so 11-month marks fell on 1 Jun 2025 and 1 May 2026, before charging starts.
+  const t = { start_date: '2024-06-16', end_date: null, base_rent: 4500, bill_from: '2026-11-01', next_increase_on: null };
+  const now = buildLedger(t, 0, '2026-11-14');
+  assert.deepEqual([now.currentRent, now.nextRent, now.nextDueDate], [4500, 4500, '2026-12-10']);
+  assert.deepEqual([now.nextIncreaseOn, now.nextIncreaseRent], ['2027-04-01', 4725]);
+  const later = buildLedger(t, 0, '2028-03-20');
+  assert.deepEqual(later.periods.filter((p) => ['2026-11', '2027-03', '2027-04', '2028-02', '2028-03'].includes(p.month)).map((p) => [p.month, p.rent]), [['2026-11', 4500], ['2027-03', 4500], ['2027-04', 4725], ['2028-02', 4725], ['2028-03', 4961]]);
+  // A mark that falls exactly on the charge-from date is already in the rent entered.
+  const onTheDay = buildLedger({ start_date: '2025-11-20', end_date: null, base_rent: 6000, bill_from: '2026-11-01', next_increase_on: null }, 0, '2026-11-14');
+  assert.deepEqual([onTheDay.currentRent, onTheDay.nextIncreaseOn, onTheDay.nextIncreaseRent], [6000, '2027-10-01', 6300]);
+  // A new tenant (not here before the app) is unchanged: increases count from move-in.
+  const fresh = buildLedger({ start_date: '2024-06-16', end_date: null, base_rent: 4500, bill_from: null, next_increase_on: null }, 0, '2026-11-14');
+  assert.equal(fresh.currentRent, 4961);
+});
 await test('financial year runs April to March', () => {
   assert.deepEqual(financialYear('2026-11-12'), ['2026-04-01', '2027-03-31']);
   assert.deepEqual(financialYear('2027-02-01'), ['2026-04-01', '2027-03-31']);

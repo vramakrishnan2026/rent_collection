@@ -454,7 +454,7 @@ function tenancyForm(t, rentFree, prefill = null) {
         <label class="f">Charge rent from <input name="bill_from" type="date" value="${esc(t?.bill_from || nextFirst())}"></label>
         <label class="f">Next 5% increase on <input name="next_increase_on" type="date" value="${esc(t?.next_increase_on || '')}"></label>
       </div>
-      <p class="note">Nothing before “Charge rent from” is charged or asked for. Enter their current rent above. After the next increase, it goes up 5% every 11 months. Leave the increase date empty to count 11-month cycles from the move-in date instead.</p>
+      <p class="note">Nothing before “Charge rent from” is charged or asked for. Enter their current rent above: it is charged as entered until the next increase, then goes up 5% every 11 months. Leave the increase date empty and the next increase falls on the next 11-month mark counted from the move-in date.</p>
     </div>`}
     <label class="f">Advance / deposit (₹, refundable) <input name="deposit" inputmode="numeric" value="${esc(t?.deposit ?? '')}"></label>
     ${t ? '' : `<label class="f">Everyone living there <small>(one name per line)</small><textarea name="people" rows="3" placeholder="Same as tenant name if left empty">${esc((prefill?.people || []).join('\n'))}</textarea></label>`}

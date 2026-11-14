@@ -15,6 +15,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 - **Tenants who lived here before the app:** tick **Already living here before this app** when adding them.
   - Enter the real (backdated) move-in date, their **current** rent, the month to **charge rent from** (the 1st of next month by default), and the date of their **next 5% increase**.
   - Nothing before the charge-from date is charged or asked for. After the next increase, rent goes up 5% every 11 months.
+  - If you leave the increase date empty, the current rent is charged as entered and the next increase falls on the next 11-month mark counted from the move-in date.
 - **Moving out:** record the last day stayed, then settle the deposit.
   - **One month's rent is kept for maintenance** (you can change the amount), and any rent still owed is taken from the rest. The app records that as a payment.
   - The refund is what's left.
