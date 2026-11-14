@@ -181,6 +181,8 @@ a.link { font-size: .8rem; font-weight: 700; color: var(--muted); text-decoratio
 .legend i.lg.paid { background: var(--green); } .legend i.lg.pending { background: var(--red); } .legend i.lg.free { background: var(--blue); }
 
 /* units */
+/* Anything marked hidden stays hidden, even where a rule above sets its display (the unit tiles did, so the filters hid nothing). */
+[hidden] { display: none !important; }
 .filters { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .2rem; }
 .fchip { border: 1px solid var(--line); background: var(--card); border-radius: 99rem; padding: .4rem .8rem; font-size: .82rem; font-weight: 600; cursor: pointer; color: var(--muted); }
 .fchip b { color: var(--text); margin-left: .2rem; }
