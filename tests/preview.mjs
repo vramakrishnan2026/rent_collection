@@ -58,6 +58,10 @@ globalThis.fetch = async (u, init = {}) => {
   if (url.startsWith('https://www.googleapis.com/drive/v3/files?') && (init.method || 'GET') === 'GET') return Response.json({ files: [] });
   if (url.startsWith('https://www.googleapis.com/')) return Response.json({ id: 'file' + ++fileNo });
   if (url.startsWith('https://api.razorpay.com/')) {
+    if (url.endsWith('/payments/qr_codes')) {
+      // A stand-in picture: the real one is Razorpay's QR code image.
+      return Response.json({ id: 'qr_' + Math.random().toString(36).slice(2, 8), image_url: '/icon-512.png', status: 'active' });
+    }
     return url.endsWith('/payment_links')
       ? Response.json({ id: 'plink_' + Math.random().toString(36).slice(2, 8), short_url: 'https://rzp.io/rzp/preview', status: 'created' })
       : Response.json({ status: 'created', payments: [] });

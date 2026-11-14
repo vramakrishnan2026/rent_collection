@@ -321,6 +321,14 @@ document.addEventListener('click', (e) => {
 
 // ---------- owner: send rent link ----------
 
+/** The QR code that goes with a rent link, big enough to scan from another phone. */
+const qrHtml = (imageUrl, amount) => `<div class="qr"><img src="${esc(imageUrl)}" alt="UPI QR code for ${inr(amount)}" onerror="this.replaceWith(Object.assign(document.createElement('p'),{className:'note',textContent:'The picture did not load. Use Open QR code below.'}))">
+  <p class="note">The tenant scans this with any UPI app (GPay, PhonePe, Paytm) to pay <b>${inr(amount)}</b>. It is recorded automatically. <a href="${esc(imageUrl)}" target="_blank" rel="noopener">Open QR code</a></p></div>`;
+
+function qrSheet(imageUrl, amount, title) {
+  openSheet(`<h2>${esc(title)}</h2>${qrHtml(imageUrl, amount)}<button class="btn block" data-close>Done</button>`);
+}
+
 async function sendLink(tenancyId) {
   const sheet = openSheet(`<h2>Rent link</h2><p class="note">Creating the Razorpay link…</p>`);
   try {
@@ -333,7 +341,13 @@ async function sendLink(tenancyId) {
         <a class="btn" ${r.smsUrl ? `href="${esc(r.smsUrl)}" data-via="sms"` : 'aria-disabled="true"'}>SMS</a>
       </div>
       <div class="actions"><button class="btn" data-copy>Copy link</button><button class="btn" data-close>Done</button></div>
+      ${r.qr ? `<button class="btn block" style="margin-top:.6rem" data-show-qr>▦ Show QR code to scan</button><div data-qr-box hidden>${qrHtml(r.qr.imageUrl, r.amount)}</div>` : ''}
+      ${!r.qr && r.qrError ? `<p class="note" style="margin-top:.8rem">No QR code this time: ${esc(r.qrError)}</p>` : ''}
       <p class="note" style="margin-top:.8rem">When the tenant pays, the payment is recorded automatically.</p>`;
+    sheet.querySelector('[data-show-qr]')?.addEventListener('click', (e) => {
+      sheet.querySelector('[data-qr-box]').hidden = false;
+      e.currentTarget.remove();
+    });
     sheet.querySelectorAll('[data-via]').forEach((a) =>
       a.addEventListener('click', () => api(`/api/links/${encodeURIComponent(r.link.id)}/sent`, { method: 'POST', body: { via: a.dataset.via } }).catch(() => {}))
     );
@@ -587,6 +601,7 @@ async function viewUnit(code, fresh) {
         .map(
           (l) => `<div class="row"><div class="main"><div class="t">${inr(l.amount)} <span class="chip ${l.status === 'paid' ? 'paid' : l.status === 'created' ? 'upcoming' : 'vacant'}">${l.status === 'created' ? 'Unpaid' : l.status === 'upi' ? 'UPI message' : esc(l.status)}</span></div>
           <div class="d">${esc(l.description)} · made ${fmtDate(l.created_at)}${l.sent_at ? ` · sent on ${esc(l.sent_via)} ${ago(l.sent_at)}` : ''}</div></div>
+          ${l.status === 'created' && l.qr_status === 'active' && l.qr_image_url ? `<button class="btn small" data-qr-link="${esc(l.id)}">▦ QR</button>` : ''}
           ${l.status === 'created' ? `<button class="btn small" data-refresh="${esc(l.id)}">Check</button>` : ''}</div>`
         )
         .join('')}</div></div>` : ''}`}`;
@@ -853,6 +868,10 @@ function wireUnit(d) {
       toast('Payment deleted');
       reload();
     });
+  });
+  on('[data-qr-link]', (el) => {
+    const l = t.links.find((x) => x.id === el.dataset.qrLink);
+    qrSheet(l.qr_image_url, l.amount, `Scan to pay · ${unit.code}`);
   });
   on('[data-refresh]', async (el) => {
     const r = await api(`/api/links/${encodeURIComponent(el.dataset.refresh)}/refresh`, { method: 'POST', body: {} }).catch((e) => toast(e.message));
@@ -1261,7 +1280,7 @@ async function viewMenu() {
     `<div class="card"><h2>Razorpay</h2>
       <p style="margin-top:0"><b>${rz.configured ? (rz.mode === 'live' ? 'Connected · live' : 'Connected · test mode') : 'Not connected'}</b></p>
       <p class="note">${rz.configured ? 'Rent links are created through your Razorpay account.' : 'Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET as secrets in Cloudflare to switch rent links on.'}</p>
-      <p class="note">Webhook URL (Razorpay › Webhooks, event <b>payment_link.paid</b>):</p>
+      <p class="note">Webhook URL (Razorpay › Webhooks, events <b>payment_link.paid</b>, <b>payment_link.cancelled</b>, <b>payment_link.expired</b> and, for QR codes, <b>qr_code.credited</b>):</p>
       <p class="mono">${esc(s.webhookUrl)}</p>
       <p class="note">Webhook secret: <b>${rz.webhook ? 'set' : 'not set (add RAZORPAY_WEBHOOK_SECRET)'}</b>. Without it, payments are still picked up by a daily check at 9 AM, or when you tap Check.</p>
       <button class="btn small danger" data-clear-test>🔒 Delete test payments</button></div>

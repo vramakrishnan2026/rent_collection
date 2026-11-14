@@ -24,6 +24,9 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
   - Tap **WhatsApp** and the chat opens with the message and link ready. Tap Send in WhatsApp and come back: the next tenant is ready. SMS is there for anyone without WhatsApp.
   - It shows how many are sent this month, and lets you skip or resend.
   - **Reminders:** in **Settings › Reminders on this phone**, turn on free phone notifications. You get "Rent links ready" at 9 AM on the 1st and, if any are left, a reminder on the 3rd. On iPhone, the app must be added to the Home Screen first.
+- **QR code with every rent link:** when a link is made, Razorpay also makes a UPI QR code for the same amount. Tap **Show QR code to scan** on the Send sheet, or **▦ QR** next to an unpaid link on the unit page, and the tenant scans it from your phone with GPay, PhonePe or Paytm.
+  - The link and the QR are two ways to pay the same rent. When one is paid, the other is closed, and the payment is recorded automatically either way.
+  - Razorpay has to switch **QR Codes** on for your account (ask Razorpay Support). Until then the link works as before and the sheet says no QR was made.
 - **Direct UPI (no gateway fee):** set your UPI ID in **Settings › Direct UPI payments** (PIN). Rent messages then also say "or pay by UPI to …". Without Razorpay, the messages offer UPI only.
 - **📷 From screenshot** (Payments, and in Record payment on a unit; owner only): a UPI payment screenshot is read, and the amount, date, UTR and payer are taken from it.
   - It's **recorded straight away** only if the payment succeeded, the tenant is clear, the UTR is new, it went to your UPI ID and the date makes sense.
@@ -86,7 +89,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 2. Go to **Webhooks › Add new webhook**:
    - URL: `https://rent-collection.<your-subdomain>.workers.dev/api/razorpay/webhook`
    - Secret: make up a long random string.
-   - Events: `payment_link.paid`, `payment_link.cancelled`, `payment_link.expired`
+   - Events: `payment_link.paid`, `payment_link.cancelled`, `payment_link.expired`, and `qr_code.credited` (so a scanned QR is recorded straight away)
 
 ### 4. Secrets
 
