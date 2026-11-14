@@ -716,6 +716,50 @@ await test('Ask: answers from a read-only summary with figures worked out by the
 });
 env.AI.run = prevAI;
 
+// --- Deleting a past tenant (a test entry or a mistake), with everything recorded for them
+console.log('Deleting a past tenant');
+await test('a past tenant can be deleted with the PIN: their payments, people and links go too, nothing else', async () => {
+  const q = (sql, ...p) => DB.sqlite.prepare(sql).all(...p);
+  assert.equal((await call('/api/units', { method: 'POST', body: { code: 'X1', floor: 'Test' } })).status, 201);
+  const made = await call('/api/tenancies', { method: 'POST', body: { unit_code: 'X1', contact_name: 'Test Tenant', phone: '9876500001', start_date: '2026-08-01', base_rent: 7000, deposit: 10000 } });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  const id = made.body.id;
+  assert.equal((await call(`/api/tenancies/${id}/people`, { method: 'POST', body: { name: 'Test Flatmate' } })).status, 201);
+  for (const amount of [7000, 3000]) assert.equal((await call('/api/payments', { method: 'POST', body: { tenancy_id: id, amount, paid_on: '2026-09-05', method: 'cash' } })).status, 201);
+  DB.sqlite.prepare("INSERT INTO payment_links (id, tenancy_id, amount, short_url, status) VALUES ('plink_x1', ?, 7000, 'https://rzp.io/x1', 'created')").run(id);
+  DB.sqlite.prepare("INSERT INTO id_uploads (id, unit_code, tenancy_id, drive_file_id, file_name, taken_at, uploaded_by) VALUES ('up_x1', 'X1', ?, 'file_x1', 'x1.jpg', '2026-08-02T10:00:00Z', 'owner')").run(id);
+
+  // Still living there: not this way.
+  const current = await call(`/api/tenancies/${id}/remove`, { method: 'POST', body: { pin: '1234' } });
+  assert.equal(current.status, 400);
+  assert.match(current.body.error, /moved out/);
+  assert.equal((await call(`/api/tenancies/${id}/end`, { method: 'POST', body: { end_date: '2026-10-15' } })).status, 200);
+  assert.equal((await call(`/api/tenancies/${id}`, { method: 'DELETE' })).status, 400, 'the no-PIN delete still refuses a tenant with payments');
+
+  const unit = (await call('/api/units/X1')).body;
+  assert.equal(unit.current, null);
+  assert.deepEqual([unit.past.length, unit.past[0].contact_name, unit.past[0].paidTotal], [1, 'Test Tenant', 10000]);
+
+  // Needs the owner, and the PIN.
+  assert.equal((await call(`/api/tenancies/${id}/remove`, { method: 'POST', body: {} })).status, 400);
+  assert.equal((await call(`/api/tenancies/${id}/remove`, { method: 'POST', body: { pin: '0000' } })).status, 400);
+  assert.equal((await call(`/api/tenancies/${id}/remove`, { method: 'POST', body: { pin: '1234' }, cookie: guard })).status, 403);
+  assert.equal(q('SELECT COUNT(*) AS n FROM payments WHERE tenancy_id = ?', id)[0].n, 2);
+
+  const others = () => JSON.stringify(['tenancies', 'people', 'payments', 'payment_links'].map((t) => q(`SELECT * FROM ${t} WHERE ${t === 'tenancies' ? 'id' : 'tenancy_id'} != ? ORDER BY 1`, id)));
+  const before = others();
+  const gone = await call(`/api/tenancies/${id}/remove`, { method: 'POST', body: { pin: '1234' } });
+  assert.equal(gone.status, 200, JSON.stringify(gone.body));
+  assert.deepEqual(gone.body.removed, { name: 'Test Tenant', unit: 'X1', payments: 2, paid: 10000 });
+  assert.equal(q('SELECT COUNT(*) AS n FROM tenancies WHERE id = ?', id)[0].n, 0);
+  for (const t of ['people', 'payments', 'payment_links']) assert.equal(q(`SELECT COUNT(*) AS n FROM ${t} WHERE tenancy_id = ?`, id)[0].n, 0, t);
+  assert.deepEqual({ ...q("SELECT unit_code, tenancy_id FROM id_uploads WHERE id = 'up_x1'")[0] }, { unit_code: 'X1', tenancy_id: null }, 'an ID photo stays with the unit');
+  assert.equal(others(), before, 'no other tenant was touched');
+  assert.deepEqual((await call('/api/units/X1')).body.past, []);
+  assert.equal((await call(`/api/tenancies/${id}/remove`, { method: 'POST', body: { pin: '1234' } })).status, 404);
+  DB.sqlite.exec("DELETE FROM id_uploads WHERE id = 'up_x1'; DELETE FROM units WHERE code = 'X1'");
+});
+
 // --- PIN sign-in for a visitor (Razorpay's check): on the normal sign-in page, real data, view only
 console.log('PIN sign-in');
 const rows = (sql) => DB.sqlite.prepare(sql).all();

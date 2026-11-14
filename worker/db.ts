@@ -359,7 +359,7 @@ export async function unitDetail(db: D1Database, code: string, today: string) {
   const past = all
     .filter((t) => t !== openRow)
     .reverse()
-    .map((t) => ({ ...tenancySummary(t, s, today), people: s.people.get(t.id) || [] }));
+    .map((t) => ({ ...tenancySummary(t, s, today), people: s.people.get(t.id) || [], paidTotal: s.paidBy.get(t.id) || 0 }));
   return { unit: { ...unit, rent_free: Boolean(unit.rent_free) }, current, past, today };
 }
 
@@ -510,6 +510,26 @@ export async function deleteTenancy(db: D1Database, id: string) {
     db.prepare('DELETE FROM payment_links WHERE tenancy_id = ?').bind(id),
     db.prepare('DELETE FROM tenancies WHERE id = ?').bind(id),
   ]);
+}
+
+/**
+ * Removes a tenant who has moved out, with everything recorded for them: payments, people and
+ * rent links. For test entries and mistakes; the route asks for the owner's PIN.
+ * A current tenant can't be removed this way (move them out first), so one tap can't wipe
+ * someone who lives there. ID photos already in Google Drive are not touched.
+ */
+export async function deletePastTenancy(db: D1Database, id: string) {
+  const t = await getTenancy(db, id);
+  if (!t.end_date) throw new ValidationError('Only a tenant who has moved out can be deleted here. Record their move-out first.');
+  const pays = await db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM payments WHERE tenancy_id = ?').bind(id).first<{ n: number; total: number }>();
+  await db.batch([
+    db.prepare('UPDATE id_uploads SET tenancy_id = NULL WHERE tenancy_id = ?').bind(id), // photos stay with the unit
+    db.prepare('DELETE FROM payments WHERE tenancy_id = ?').bind(id),
+    db.prepare('DELETE FROM payment_links WHERE tenancy_id = ?').bind(id),
+    db.prepare('DELETE FROM people WHERE tenancy_id = ?').bind(id),
+    db.prepare('DELETE FROM tenancies WHERE id = ?').bind(id),
+  ]);
+  return { name: t.contact_name, unit: t.unit_code, payments: pays?.n ?? 0, paid: pays?.total ?? 0 };
 }
 
 // ---------- people ----------

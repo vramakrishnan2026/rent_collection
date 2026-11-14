@@ -602,7 +602,8 @@ async function viewUnit(code, fresh) {
         }</div></div>
         ${p.owedThroughEnd > 0 ? `<div class="amt" style="color:var(--red)">${inr(p.owedThroughEnd)}</div>` : ''}
         ${p.deposit_refunded_on ? '' : `<button class="btn small primary" data-settle="${esc(p.id)}">Settle deposit</button>`}
-        ${p.owedThroughEnd > 0 ? `<button class="btn small" data-pay-past="${esc(p.id)}" data-owed="${p.owedThroughEnd}">Record payment</button>` : ''}</div>`
+        ${p.owedThroughEnd > 0 ? `<button class="btn small" data-pay-past="${esc(p.id)}" data-owed="${p.owedThroughEnd}">Record payment</button>` : ''}
+        <button class="btn small danger" data-remove-past="${esc(p.id)}" title="Delete this past tenant">🔒 Delete</button></div>`
       )
       .join('')}</div></div>`;
   }
@@ -707,6 +708,19 @@ function wireUnit(d) {
   });
   on('[data-settle]', (el) => settleSheet(el.dataset.settle, reload));
   on('[data-pay-past]', (el) => paymentSheet(el.dataset.payPast, Number(el.dataset.owed), reload));
+  // Past tenants: delete a test entry or a mistake, with everything recorded for them.
+  on('[data-remove-past]', (el) => {
+    const p = d.past.find((x) => x.id === el.dataset.removePast);
+    pinSheet(
+      `Delete ${p.contact_name} (${fmtDate(p.start_date)} – ${fmtDate(p.end_date)})${p.paidTotal ? ` and their payments (${inr(p.paidTotal)})` : ''}? This can’t be undone.`,
+      'Delete tenant',
+      async (pin) => {
+        await api(`/api/tenancies/${encodeURIComponent(p.id)}/remove`, { method: 'POST', body: { pin } });
+        toast('Past tenant deleted');
+        reload();
+      }
+    );
+  });
   if (!t) return;
 
   on('[data-act=pay]', () => paymentSheet(t.id, t.collectable > 0 ? t.collectable : t.nextRent || t.currentRent, reload));

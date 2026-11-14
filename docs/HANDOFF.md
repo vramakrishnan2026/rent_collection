@@ -108,6 +108,15 @@ Secret **values** are only in Cloudflare, never in this repo.
    - Llama 3.3 70B (falling back to Llama 4 Scout) only finds and phrases the answer, and is told to say when the data doesn't have it.
    - No phone numbers, addresses or IDs are included. The conversation history is kept only on the page, for that visit.
 
+## Deleting a past tenant (built 14 Nov 2026)
+
+The owner had added test tenants and moved them out, and there was no way to remove them (the existing delete is only for a current tenant with no payments). They asked how to remove them from the database; a button was built instead of hand-editing D1.
+
+- Unit page › Past tenants › **🔒 Delete** (PIN). The question names the tenant, their dates and the total of the payments that will go.
+- Removes the tenancy with its payments, people and rent links (`deletePastTenancy` in `worker/db.ts`). Dashboard totals change accordingly.
+- **Only a tenant who has moved out**, so one tap can't wipe someone living there.
+- ID photos in Google Drive are not touched; an ID upload stays with the unit.
+
 ## Unit page keeps itself up to date (built 13 Nov 2026)
 
 The owner noticed that after sending a rent link from a unit page, a payment didn't show until they left the page and came back. The webhook had recorded it; only the screen was stale. They asked what a refresh would cost and chose the light version:
