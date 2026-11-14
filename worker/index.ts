@@ -11,6 +11,7 @@ import {
   date,
   deletePayment,
   deletePerson,
+  deletePastTenancy,
   deleteTenancy,
   deleteTestPayments,
   endTenancy,
@@ -236,6 +237,11 @@ async function handleApi(request: Request, env: Env, url: URL, user: User): Prom
     if (seg.length === 2 && method === 'DELETE') {
       await deleteTenancy(env.DB, id);
       return json({ success: true });
+    }
+    // Deleting a past tenant takes their payments with them, so it needs the PIN.
+    if (seg.length === 3 && action === 'remove' && method === 'POST') {
+      await requirePin(request, env);
+      return json({ success: true, removed: await deletePastTenancy(env.DB, id) });
     }
     if (seg.length === 3 && method === 'POST') {
       if (action === 'end') await endTenancy(env.DB, id, await readJson(request));

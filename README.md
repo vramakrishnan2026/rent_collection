@@ -31,6 +31,7 @@ Rent collection for **Challaghatta Home** (24 units: G1–G6, F1–F6, S1–S6, 
 - **💬 Ask about your rent** (dashboard): ask in plain English, for example "Who owes rent?" or "How much did the First floor pay this year?"
   - The app works out the figures itself, with the same rules as the screens, and the AI only phrases the answer.
   - It's read-only, and phone numbers and addresses are left out.
+- **Deleting a past tenant (unit page › Past tenants › 🔒 Delete, PIN):** for test entries and mistakes. It removes that tenant with their payments, people and rent links, and can't be undone. Only someone who has moved out can be deleted this way. ID photos already in Google Drive stay there.
 - **PIN sign-in for a visitor (Settings › PIN sign-in, your PIN to turn on):** for someone without an approved Google account who has to sign in and look inside, such as Razorpay's check.
   - Adds a **PIN box under "Sign in with Google"** on the sign-in page, only while it is on. You get an 8-digit PIN to share (not your own PIN for locked actions).
   - The visitor sees your **real** screens, **view only**: every change is refused on the server.
